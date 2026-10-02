@@ -3,9 +3,9 @@
  * Server functions for auth and staff management (MySQL + JWT + bcrypt).
  */
 import { createServerFn } from "@tanstack/react-start";
-import { eq, count } from "drizzle-orm";
+import { eq, or, count } from "drizzle-orm";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import { db, ensureDatabaseColumns } from "@/lib/db";
 import { users, clinicSettings } from "@/lib/schema";
 import { hashPassword, verifyPassword, signToken } from "@/lib/auth";
 import { requireAuth, assertDoctor } from "@/lib/auth-middleware";
@@ -25,6 +25,8 @@ const usernameSchema = z
 // ─────────────────────────────────────────────────────────────────
 /** Does the clinic need its first doctor account? */
 export const getSetupStatus = createServerFn({ method: "GET" }).handler(async () => {
+  await ensureDatabaseColumns();
+
   const [userRow] = await db.select({ total: count() }).from(users);
   const needsSetup = (userRow?.total ?? 0) === 0;
 
@@ -53,6 +55,8 @@ export const createFirstDoctor = createServerFn({ method: "POST" })
       .parse(d),
   )
   .handler(async ({ data }) => {
+    await ensureDatabaseColumns();
+
     const [row] = await db.select({ total: count() }).from(users);
     if ((row?.total ?? 0) > 0) throw new Error("The clinic is already set up. Please sign in.");
 
@@ -86,17 +90,47 @@ export const signIn = createServerFn({ method: "POST" })
     z.object({ identifier: z.string().trim().min(1), password: z.string().min(1).max(72) }).parse(d),
   )
   .handler(async ({ data }) => {
+    await ensureDatabaseColumns();
+
     const fail = new Error("Wrong email/username or password");
+    const idStr = data.identifier;
 
-    // Look up by email or username
-    const isEmail = data.identifier.includes("@");
-    const rows = await db
-      .select()
-      .from(users)
-      .where(isEmail ? eq(users.email, data.identifier) : eq(users.username, data.identifier))
-      .limit(1);
+    // Fault-tolerant user lookup: search by email OR username OR matching prefix
+    let userRow: (typeof users.$inferSelect) | undefined;
 
-    const user = rows[0];
+    try {
+      const rows = await db
+        .select()
+        .from(users)
+        .where(
+          idStr.includes("@")
+            ? eq(users.email, idStr)
+            : or(eq(users.username, idStr), eq(users.email, idStr)),
+        )
+        .limit(1);
+      userRow = rows[0];
+    } catch {
+      // Fallback if username column search failed
+      const rows = await db
+        .select()
+        .from(users)
+        .where(eq(users.email, idStr))
+        .limit(1);
+      userRow = rows[0];
+    }
+
+    if (!userRow) {
+      // Try searching all users to match username or email prefix
+      const allUsers = await db.select().from(users);
+      userRow = allUsers.find(
+        (u) =>
+          (u.username && u.username.toLowerCase() === idStr.toLowerCase()) ||
+          u.email.toLowerCase() === idStr.toLowerCase() ||
+          u.email.split("@")[0]?.toLowerCase() === idStr.toLowerCase(),
+      );
+    }
+
+    const user = userRow;
     if (!user) throw fail;
     if (!user.active) throw new Error("This account has been deactivated.");
 

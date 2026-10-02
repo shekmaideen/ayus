@@ -30,3 +30,43 @@ function getPool(): mysql.Pool {
 export const db = drizzle(getPool(), { schema, mode: "default" });
 
 export type DB = typeof db;
+
+let _migrated = false;
+
+/** Auto-migrate missing columns/tables on existing MySQL databases */
+export async function ensureDatabaseColumns() {
+  if (_migrated) return;
+  try {
+    const pool = getPool();
+    // 1. Add missing username column to existing users table
+    try {
+      await pool.query("ALTER TABLE users ADD COLUMN username VARCHAR(50) UNIQUE AFTER email");
+    } catch {
+      // Column already exists or error ignored
+    }
+
+    // 2. Ensure appointments table exists
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS appointments (
+          id         CHAR(36)     PRIMARY KEY DEFAULT (UUID()),
+          patient_id CHAR(36)     NOT NULL,
+          doctor_id  CHAR(36),
+          date       DATE         NOT NULL,
+          time       VARCHAR(20)  NOT NULL DEFAULT '10:00 AM',
+          status     VARCHAR(20)  NOT NULL DEFAULT 'Scheduled',
+          notes      VARCHAR(500) NOT NULL DEFAULT '',
+          created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE,
+          FOREIGN KEY (doctor_id)  REFERENCES users(id)    ON DELETE SET NULL
+        )
+      `);
+    } catch {
+      // Table already exists or error ignored
+    }
+    _migrated = true;
+  } catch (err) {
+    console.warn("Schema self-healing check skipped:", err);
+  }
+}
+
