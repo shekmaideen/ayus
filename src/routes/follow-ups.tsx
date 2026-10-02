@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { addDays, format } from "date-fns";
-import { Ban, CalendarClock, CheckCircle2, MessageCircle, Phone, XCircle } from "lucide-react";
+import { Ban, CalendarClock, CheckCircle2, XCircle } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AppShell, PageTitle } from "@/components/AppShell";
@@ -102,14 +102,7 @@ function FollowUps() {
                   >
                     {f.status === "Pending" ? `Due ${formatDate(f.dueDate)}` : f.status}
                   </Badge>
-                  <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="icon" aria-label="Call patient" title={p?.phone}>
-                      <Phone className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" aria-label="Message on WhatsApp">
-                      <MessageCircle className="h-4 w-4 text-success" />
-                    </Button>
-                  </div>
+
                   {editable && f.status === "Pending" && (
                     <div className="flex gap-2">
                       <Button
