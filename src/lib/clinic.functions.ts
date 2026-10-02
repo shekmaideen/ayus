@@ -34,8 +34,16 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 export const loadClinicData = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async ({ context }) => {
+    // Safely query appointments table in case migration hasn't been executed on DB yet
+    let appts: unknown[] = [];
+    try {
+      appts = await db.select().from(appointments).orderBy(asc(appointments.date));
+    } catch {
+      appts = [];
+    }
+
     const [
-      meArray, pats, chs, vis, meds, pres, bls, fus, tpls, settings, appts,
+      meArray, pats, chs, vis, meds, pres, bls, fus, tpls, settings,
     ] = await Promise.all([
       db.select().from(users).where(eq(users.id, context.userId)).limit(1),
       db.select().from(patients).orderBy(desc(patients.createdAt)),
@@ -47,7 +55,6 @@ export const loadClinicData = createServerFn({ method: "GET" })
       db.select().from(followUps).orderBy(asc(followUps.dueDate)),
       db.select().from(templates).orderBy(asc(templates.name)),
       db.select().from(clinicSettings).where(eq(clinicSettings.id, 1)).limit(1),
-      db.select().from(appointments).orderBy(asc(appointments.date)),
     ]);
     const me = meArray[0];
     if (!me) throw new Error("User not found");

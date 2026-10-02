@@ -191,6 +191,11 @@ export const useClinic = create<ClinicState>()(
       loadAll: async () => {
         const token = sessionStorage.getItem("hc_token");
         if (!token) { set({ ...empty, loaded: true }); return; }
+
+        if (typeof document !== "undefined" && !document.cookie.includes("hc_token=")) {
+          document.cookie = `hc_token=${token}; path=/; max-age=2592000; SameSite=Lax`;
+        }
+
         try {
           const { loadClinicData } = await sf();
           const d = await loadClinicData();
@@ -211,8 +216,14 @@ export const useClinic = create<ClinicState>()(
             templates:     d.tpls.map((t) => ({ id: t.id, name: t.name, items: t.items as Template["items"] })),
             settings:      d.settings ? toSettings(d.settings) : DEFAULT_SETTINGS,
           });
-        } catch {
-          set({ ...empty, loaded: true });
+        } catch (err: unknown) {
+          console.error("Failed to load clinic data:", err);
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.includes("Unauthorized") || msg.includes("User not found")) {
+            useClinic.getState().clear();
+          } else {
+            set({ loaded: true });
+          }
         }
       },
 
