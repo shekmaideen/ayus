@@ -11,6 +11,9 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { billTotal, useClinic } from "@/store/clinic";
 import { formatDate, inr, todayISO } from "@/lib/format";
+import type { Bill } from "@/data/types";
+import { WhatsAppButton } from "@/components/WhatsAppButton";
+import { buildBillingMessage, openWhatsAppMessage } from "@/lib/whatsapp";
 
 export const Route = createFileRoute("/billing/")({
   head: () => ({
@@ -36,13 +39,34 @@ const statusClass = (s: string) =>
       : "bg-danger-soft text-destructive";
 
 function Billing() {
-  const { bills, patients, role, createManualBill } = useClinic();
+  const { bills, patients, role, settings, createManualBill } = useClinic();
   const navigate = useNavigate();
   const [tab, setTab] = useState("All");
   const [q, setQ] = useState("");
   const [manualPatient, setManualPatient] = useState("");
   const [manualDate, setManualDate] = useState(todayISO());
   const [open, setOpen] = useState(false);
+
+  const handleQuickWhatsApp = (b: Bill) => {
+    const p = patients.find((pat) => pat.id === b.patientId);
+    if (!p) {
+      toast.error("Patient details not found for this bill.");
+      return;
+    }
+    const message = buildBillingMessage({
+      clinicName: settings.clinicName,
+      patientName: p.name,
+      billNo: b.invoiceNo,
+      date: b.date,
+      items: b.items.map((it) => ({
+        label: it.label,
+        qty: it.qty,
+        rate: it.rate,
+      })),
+      totalAmount: billTotal(b),
+    });
+    openWhatsAppMessage(p.phone, message);
+  };
 
   const nameOf = (id: string) => patients.find((p) => p.id === id)?.name ?? "Unknown";
 
@@ -143,11 +167,21 @@ function Billing() {
                   </div>
                   {highlight && <Badge className="bg-gold text-gold-foreground hover:bg-gold">Ready for payment</Badge>}
                   <Badge variant="outline" className={statusClass(b.status)}>{b.status}</Badge>
-                  <div className="text-right">
-                    <p className="font-semibold">{inr(total)}</p>
-                    {b.status !== "Paid" && (
-                      <p className="text-xs text-muted-foreground">Balance {inr(total - b.amountReceived)}</p>
-                    )}
+                  <div className="flex items-center gap-3">
+                    <div className="text-right">
+                      <p className="font-semibold">{inr(total)}</p>
+                      {b.status !== "Paid" && (
+                        <p className="text-xs text-muted-foreground">Balance {inr(total - b.amountReceived)}</p>
+                      )}
+                    </div>
+                    <WhatsAppButton
+                      size="sm"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleQuickWhatsApp(b);
+                      }}
+                    />
                   </div>
                 </Link>
               );

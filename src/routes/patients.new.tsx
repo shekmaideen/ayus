@@ -13,6 +13,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { useClinic } from "@/store/clinic";
 import { cn } from "@/lib/utils";
 import type { Patient } from "@/data/types";
+import { WhatsAppButton } from "@/components/WhatsAppButton";
+import { buildRegistrationMessage, openWhatsAppMessage } from "@/lib/whatsapp";
 
 export const Route = createFileRoute("/patients/new")({
   head: () => ({
@@ -33,7 +35,7 @@ export const Route = createFileRoute("/patients/new")({
 const STEPS = ["Personal", "Contact", "Medical"];
 
 function RegisterPatient() {
-  const { addPatient, nextRegNo } = useClinic();
+  const { addPatient, nextRegNo, settings } = useClinic();
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
   const [created, setCreated] = useState<Patient | null>(null);
@@ -54,6 +56,25 @@ function RegisterPatient() {
 
   const stepValid =
     step === 0 ? form.name.trim().length > 2 && Number(form.age) > 0 : step === 1 ? form.phone.trim().length >= 10 : true;
+
+  const handleSendWhatsApp = (targetPatient?: Patient | null) => {
+    const p = targetPatient ?? created;
+    if (!p) {
+      toast.error("Please save the patient before sending the WhatsApp message.");
+      return;
+    }
+
+    const message = buildRegistrationMessage({
+      clinicName: settings.clinicName,
+      doctorName: settings.doctorName,
+      clinicPhone: settings.phone,
+      patientName: p.name,
+      regNo: p.regNo,
+      registrationDate: p.registeredOn,
+    });
+
+    openWhatsAppMessage(p.phone, message);
+  };
 
   const submit = () => {
     const patient = addPatient({
@@ -83,6 +104,9 @@ function RegisterPatient() {
             <span className="font-display text-4xl text-primary-soft-foreground">{created.regNo}</span>
           </div>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
+            <WhatsAppButton
+              onClick={() => handleSendWhatsApp(created)}
+            />
             <Button asChild className="rounded-xl">
               <Link to="/prescriptions/new" search={{ patientId: created.id }}>
                 Create Visit
@@ -275,9 +299,14 @@ function RegisterPatient() {
               Continue <ChevronRight className="ml-1 h-4 w-4" />
             </Button>
           ) : (
-            <Button className="rounded-xl" onClick={submit}>
-              Register patient
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button className="rounded-xl" onClick={submit}>
+                Save Patient
+              </Button>
+              <WhatsAppButton
+                onClick={() => handleSendWhatsApp()}
+              />
+            </div>
           )}
         </div>
       </div>

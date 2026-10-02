@@ -12,6 +12,8 @@ import { LeafMark } from "@/components/Logo";
 import { billTotal, useClinic } from "@/store/clinic";
 import { formatDate, inr } from "@/lib/format";
 import type { BillStatus } from "@/data/types";
+import { WhatsAppButton } from "@/components/WhatsAppButton";
+import { buildBillingMessage, openWhatsAppMessage } from "@/lib/whatsapp";
 
 export const Route = createFileRoute("/billing/$id")({
   head: () => ({
@@ -44,9 +46,45 @@ function BillDetail() {
     );
   }
 
-  const patient = patients.find((p) => p.id === bill.patientId)!;
+  const patient = patients.find((p) => p.id === bill.patientId);
+
+  if (!patient) {
+    return (
+      <div className="py-24 text-center">
+        <p className="text-muted-foreground">Patient record not found for this invoice.</p>
+        <Button asChild variant="outline" className="mt-4"><Link to="/billing">Back to billing</Link></Button>
+      </div>
+    );
+  }
+
   const total = billTotal(bill);
   const balance = total - bill.amountReceived;
+
+  const handleSendWhatsApp = () => {
+    if (!bill) {
+      toast.error("Please save the bill before sending the WhatsApp message.");
+      return;
+    }
+    if (!patient) {
+      toast.error("Patient details not found for this bill.");
+      return;
+    }
+
+    const message = buildBillingMessage({
+      clinicName: settings.clinicName,
+      patientName: patient.name,
+      billNo: bill.invoiceNo,
+      date: bill.date,
+      items: bill.items.map((it) => ({
+        label: it.label,
+        qty: it.qty,
+        rate: it.rate,
+      })),
+      totalAmount: total,
+    });
+
+    openWhatsAppMessage(patient.phone, message);
+  };
 
   return (
     <>
@@ -54,13 +92,14 @@ function BillDetail() {
         <Button asChild variant="ghost" size="sm" className="-ml-2">
           <Link to="/billing"><ArrowLeft className="mr-1.5 h-4 w-4" /> All bills</Link>
         </Button>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button variant="outline" className="rounded-xl" onClick={() => window.print()}>
             <Printer className="mr-2 h-4 w-4" /> Print receipt
           </Button>
           <Button variant="outline" className="rounded-xl" onClick={() => window.print()}>
             <FileDown className="mr-2 h-4 w-4" /> Download PDF
           </Button>
+          <WhatsAppButton onClick={handleSendWhatsApp} />
         </div>
       </div>
 

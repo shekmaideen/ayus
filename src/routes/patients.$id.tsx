@@ -25,7 +25,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { billTotal, can, useClinic } from "@/store/clinic";
 import { formatDate, initials, inr, todayISO } from "@/lib/format";
-import type { CaseHistory } from "@/data/types";
+import type { Bill, CaseHistory, Prescription } from "@/data/types";
+import { WhatsAppButton } from "@/components/WhatsAppButton";
+import { buildBillingMessage, buildPrescriptionMessage, buildRegistrationMessage, openWhatsAppMessage } from "@/lib/whatsapp";
 
 export const Route = createFileRoute("/patients/$id")({
   head: () => ({
@@ -120,6 +122,7 @@ function PatientProfile() {
     addFollowUp,
     savePrescription,
     setFollowUpStatus,
+    settings,
   } = useClinic();
   const patient = patients.find((p) => p.id === id);
   const [editOpen, setEditOpen] = useState(false);
@@ -131,6 +134,57 @@ function PatientProfile() {
   const [note, setNote] = useState({ complaint: "", notes: "" });
   const [ch, setCh] = useState<CaseHistory>(caseHistories[id] ?? EMPTY_CH);
   const [draft, setDraft] = useState(patient);
+
+  const handleSendRegistrationWhatsApp = () => {
+    if (!patient) return;
+    const message = buildRegistrationMessage({
+      clinicName: settings.clinicName,
+      doctorName: settings.doctorName,
+      clinicPhone: settings.phone,
+      patientName: patient.name,
+      regNo: patient.regNo,
+      registrationDate: patient.registeredOn,
+    });
+    openWhatsAppMessage(patient.phone, message);
+  };
+
+  const handleSendPrescriptionWhatsApp = (rx: Prescription) => {
+    if (!patient) return;
+    const message = buildPrescriptionMessage({
+      clinicName: settings.clinicName,
+      doctorName: settings.doctorName,
+      clinicPhone: settings.phone,
+      patientName: patient.name,
+      regNo: patient.regNo,
+      visitDate: rx.date,
+      items: rx.items.map((i) => ({
+        medicineName: i.medicineName,
+        potency: i.potency,
+        dosage: i.dosage,
+        frequency: i.frequency,
+        duration: i.duration,
+        instructions: i.instructions,
+      })),
+    });
+    openWhatsAppMessage(patient.phone, message);
+  };
+
+  const handleSendBillWhatsApp = (b: Bill) => {
+    if (!patient) return;
+    const message = buildBillingMessage({
+      clinicName: settings.clinicName,
+      patientName: patient.name,
+      billNo: b.invoiceNo,
+      date: b.date,
+      items: b.items.map((it) => ({
+        label: it.label,
+        qty: it.qty,
+        rate: it.rate,
+      })),
+      totalAmount: billTotal(b),
+    });
+    openWhatsAppMessage(patient.phone, message);
+  };
 
   if (!patient) {
     return (
@@ -264,6 +318,7 @@ function PatientProfile() {
                   </Link>
                 </Button>
               )}
+              <WhatsAppButton onClick={handleSendRegistrationWhatsApp} />
             </div>
           </div>
         </div>
@@ -583,9 +638,13 @@ function PatientProfile() {
               <div key={rx.id} className="card-soft p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-semibold">{formatDate(rx.date)}</span>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {rx.isRefill && <Badge variant="secondary">Refill</Badge>}
                     {rx.followUpDate && <Badge variant="outline">Follow-up {formatDate(rx.followUpDate)}</Badge>}
+                    <WhatsAppButton
+                      size="sm"
+                      onClick={() => handleSendPrescriptionWhatsApp(rx)}
+                    />
                   </div>
                 </div>
                 <div className="mt-3 overflow-x-auto">
@@ -629,7 +688,17 @@ function PatientProfile() {
               >
                 {b.status}
               </Badge>
-              <span className="ml-auto font-semibold">{inr(billTotal(b))}</span>
+              <div className="ml-auto flex items-center gap-3">
+                <span className="font-semibold">{inr(billTotal(b))}</span>
+                <WhatsAppButton
+                  size="sm"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleSendBillWhatsApp(b);
+                  }}
+                />
+              </div>
             </Link>
           ))}
         </TabsContent>

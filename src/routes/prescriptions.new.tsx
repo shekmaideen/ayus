@@ -14,6 +14,8 @@ import { LeafMark } from "@/components/Logo";
 import { can, useClinic } from "@/store/clinic";
 import { formatDate, inr, todayISO } from "@/lib/format";
 import type { Bill, Prescription, PrescriptionItem } from "@/data/types";
+import { WhatsAppButton } from "@/components/WhatsAppButton";
+import { buildPrescriptionMessage, openWhatsAppMessage } from "@/lib/whatsapp";
 
 export const Route = createFileRoute("/prescriptions/new")({
   validateSearch: (search: Record<string, unknown>): { patientId?: string; refill?: string } => {
@@ -104,6 +106,36 @@ function Builder() {
     toast.success("Prescription saved · stock updated · bill generated");
   };
 
+  const handleSendWhatsApp = () => {
+    if (!saved) {
+      toast.error("Please save the prescription before sending the WhatsApp message.");
+      return;
+    }
+    if (!patient) {
+      toast.error("Please select a patient.");
+      return;
+    }
+
+    const message = buildPrescriptionMessage({
+      clinicName: settings.clinicName,
+      doctorName: settings.doctorName,
+      clinicPhone: settings.phone,
+      patientName: patient.name,
+      regNo: patient.regNo,
+      visitDate: saved.prescription.date,
+      items: saved.prescription.items.map((i) => ({
+        medicineName: i.medicineName,
+        potency: i.potency,
+        dosage: i.dosage,
+        frequency: i.frequency,
+        duration: i.duration,
+        instructions: i.instructions,
+      })),
+    });
+
+    openWhatsAppMessage(patient.phone, message);
+  };
+
   if (saved && patient) {
     return (
       <>
@@ -119,6 +151,7 @@ function Builder() {
                 <Button variant="outline" className="rounded-xl" onClick={() => window.print()}>
                   <FileDown className="mr-2 h-4 w-4" /> Download PDF
                 </Button>
+                <WhatsAppButton onClick={handleSendWhatsApp} />
                 <Button asChild className="rounded-xl">
                   <Link to="/billing/$id" params={{ id: saved.bill.id }}>Open bill</Link>
                 </Button>
@@ -411,12 +444,18 @@ function Builder() {
             </div>
           )}
 
-          <Button className="h-11 w-full rounded-xl" onClick={handleSave}>
-            Save prescription & generate bill
-          </Button>
-          <Button variant="ghost" className="w-full" onClick={() => navigate({ to: "/patients" })}>
-            Cancel
-          </Button>
+          <div className="space-y-2">
+            <Button className="h-11 w-full rounded-xl" onClick={handleSave}>
+              Save prescription & generate bill
+            </Button>
+            <WhatsAppButton
+              className="h-11 w-full justify-center"
+              onClick={handleSendWhatsApp}
+            />
+            <Button variant="ghost" className="w-full" onClick={() => navigate({ to: "/patients" })}>
+              Cancel
+            </Button>
+          </div>
         </div>
       </div>
     </>
