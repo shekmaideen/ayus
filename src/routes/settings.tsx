@@ -9,6 +9,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   XCircle,
+  ShieldCheck,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -30,6 +31,7 @@ import { LeafMark } from "@/components/Logo";
 import { StaffManager } from "@/components/StaffManager";
 import { can, useClinic } from "@/store/clinic";
 import { exportBackup, importBackup, importPatientsCSV } from "@/lib/backup.functions";
+import { listAuditLogs } from "@/lib/clinic.functions";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
@@ -200,6 +202,9 @@ function SettingsPage() {
 
         {/* ── Patient CSV Import ────────────────────────────────── */}
         <PatientImportPanel onImported={() => void loadAll()} />
+
+        {/* ── Clinical & System Audit Trail ─────────────────────── */}
+        <AuditLogsPanel />
       </div>
     </>
   );
@@ -497,3 +502,95 @@ function PatientImportPanel({ onImported }: { onImported: () => void }) {
     </div>
   );
 }
+
+// ─── Audit Logs Panel ─────────────────────────────────────────────
+function AuditLogsPanel() {
+  const getLogs = useServerFn(listAuditLogs);
+  const [logs, setLogs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [loadedOnce, setLoadedOnce] = useState(false);
+
+  const fetchLogs = async () => {
+    setLoading(true);
+    try {
+      const data = await getLogs();
+      setLogs(data);
+      setLoadedOnce(true);
+    } catch {
+      toast.error("Failed to load audit logs.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="card-soft p-5">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <ShieldCheck className="h-5 w-5 text-primary" />
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+              Clinical & System Audit Trail
+            </h3>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Immutable log of clinical actions, financial updates, prescriptions, and system backups.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-2 rounded-xl shrink-0"
+          onClick={fetchLogs}
+          disabled={loading}
+          id="btn-view-audit-logs"
+        >
+          <RotateCcw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+          {loadedOnce ? "Refresh Logs" : "View Audit Logs"}
+        </Button>
+      </div>
+
+      {loadedOnce ? (
+        logs.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-4 text-center">No audit records logged yet.</p>
+        ) : (
+          <div className="max-h-72 overflow-y-auto rounded-xl border text-xs">
+            <table className="w-full">
+              <thead className="bg-muted sticky top-0">
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium">Timestamp</th>
+                  <th className="px-3 py-2 text-left font-medium">User</th>
+                  <th className="px-3 py-2 text-left font-medium">Action</th>
+                  <th className="px-3 py-2 text-left font-medium">Entity</th>
+                  <th className="px-3 py-2 text-left font-medium">Details</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {logs.map((log) => (
+                  <tr key={log.id} className="hover:bg-muted/40 transition-colors">
+                    <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{log.createdAt}</td>
+                    <td className="px-3 py-2 font-medium">{log.userName || "System"}</td>
+                    <td className="px-3 py-2">
+                      <Badge variant="outline" className="text-[11px] font-mono">
+                        {log.action}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-2 capitalize">{log.entityType}</td>
+                    <td className="px-3 py-2 text-muted-foreground max-w-xs truncate" title={log.details ?? ""}>
+                      {log.details || "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : (
+        <div className="rounded-xl border border-dashed p-6 text-center text-xs text-muted-foreground">
+          Click <strong>View Audit Logs</strong> to inspect recent clinical, billing, and administrative events.
+        </div>
+      )}
+    </div>
+  );
+}
+

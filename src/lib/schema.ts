@@ -86,6 +86,7 @@ export const medicines = mysqlTable("medicines", {
   potencies: json("potencies").$type<string[]>().notNull(),
   stock:     int("stock").notNull().default(0),
   price:     decimal("price", { precision: 10, scale: 2 }).notNull().default("0"),
+  active:    boolean("active").notNull().default(true),
   createdAt: datetime("created_at", { mode: "string" }).notNull(),
 });
 
@@ -143,4 +144,17 @@ export const loginAttempts = mysqlTable("login_attempts", {
   attemptedAt: datetime("attempted_at", { mode: "string" }).notNull(),
   succeeded:   boolean("succeeded").notNull().default(false),
 });
+
+// ─── Audit Logs (Activity & Compliance) ──────────────────────────
+export const auditLogs = mysqlTable("audit_logs", {
+  id:         int("id").autoincrement().primaryKey(),
+  userId:     char("user_id", { length: 36 }),
+  userName:   varchar("user_name", { length: 100 }).notNull().default(""),
+  action:     varchar("action", { length: 50 }).notNull(),
+  entityType: varchar("entity_type", { length: 50 }).notNull(),
+  entityId:   varchar("entity_id", { length: 100 }),
+  details:    text("details"),
+  createdAt:  datetime("created_at", { mode: "string" }).notNull(),
+});
+
 

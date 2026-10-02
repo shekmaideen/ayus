@@ -50,6 +50,7 @@ const toVisit = (r: any): Visit => ({
 });
 const toMedicine = (r: any): Medicine => ({
   id: r.id, name: r.name, potencies: r.potencies ?? [], stock: r.stock, price: Number(r.price),
+  active: r.active !== undefined ? Boolean(r.active) : true,
 });
 const toPrescription = (r: any): Prescription => ({
   id: r.id, patientId: r.patientId ?? r.patient_id, visitId: r.visitId ?? r.visit_id ?? "",

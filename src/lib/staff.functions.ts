@@ -9,6 +9,7 @@ import { db } from "@/lib/db";
 import { users, clinicSettings, loginAttempts } from "@/lib/schema";
 import { hashPassword, verifyPassword, signToken } from "@/lib/auth";
 import { requireAuth, assertDoctor } from "@/lib/auth-middleware";
+import { logAudit } from "@/lib/audit";
 
 const crypto = globalThis.crypto;
 const uid = () => crypto.randomUUID();
@@ -45,7 +46,7 @@ export const getSetupStatus = createServerFn({ method: "GET" }).handler(async ()
 // ─────────────────────────────────────────────────────────────────
 /** Create the first doctor account (only works when no users exist). */
 export const createFirstDoctor = createServerFn({ method: "POST" })
-  .inputValidator((d) =>
+  .validator((d) =>
     z
       .object({
         fullName: z.string().trim().min(2).max(100),
@@ -78,6 +79,14 @@ export const createFirstDoctor = createServerFn({ method: "POST" })
       .set({ doctorName: data.fullName })
       .where(eq(clinicSettings.id, 1));
 
+    await logAudit({
+      userId: id,
+      userName: data.fullName,
+      action: "SETUP_FIRST_DOCTOR",
+      entityType: "user",
+      entityId: id,
+    });
+
     const token = signToken({ userId: id, role: "doctor" });
     return { ok: true, token, userId: id, role: "doctor" as const, userName: data.fullName };
   });
@@ -85,7 +94,7 @@ export const createFirstDoctor = createServerFn({ method: "POST" })
 // ─────────────────────────────────────────────────────────────────
 /** Sign in with email or username. Returns a JWT token with rate-limit protection. */
 export const signIn = createServerFn({ method: "POST" })
-  .inputValidator((d) =>
+  .validator((d) =>
     z.object({ identifier: z.string().trim().min(1), password: z.string().min(1).max(72) }).parse(d),
   )
   .handler(async ({ data }) => {
@@ -200,10 +209,11 @@ export const listStaff = createServerFn({ method: "GET" })
   });
 
 // ─────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────
 /** Add a new receptionist (doctor only). */
 export const addStaff = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) =>
+  .validator((d) =>
     z
       .object({
         fullName: z.string().trim().min(2).max(100),
@@ -222,8 +232,9 @@ export const addStaff = createServerFn({ method: "POST" })
 
     const email = data.email || `${data.username}@staff.homeocare.local`;
     const hashed = await hashPassword(data.password);
+    const newId = uid();
     await db.insert(users).values({
-      id:        uid(),
+      id:        newId,
       email,
       username:  data.username,
       fullName:  data.fullName,
@@ -232,6 +243,16 @@ export const addStaff = createServerFn({ method: "POST" })
       active:    true,
       createdAt: now(),
     });
+
+    await logAudit({
+      userId: context.userId,
+      userName: "Doctor",
+      action: "ADD_STAFF",
+      entityType: "user",
+      entityId: newId,
+      details: { username: data.username, fullName: data.fullName },
+    });
+
     return { ok: true };
   });
 
@@ -239,13 +260,22 @@ export const addStaff = createServerFn({ method: "POST" })
 /** Reset a staff member's password (doctor only). */
 export const resetStaffPassword = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) =>
+  .validator((d) =>
     z.object({ userId: z.string().uuid(), password: z.string().min(8).max(72) }).parse(d),
   )
   .handler(async ({ data, context }) => {
     assertDoctor(context.role);
     const hashed = await hashPassword(data.password);
     await db.update(users).set({ password: hashed }).where(eq(users.id, data.userId));
+
+    await logAudit({
+      userId: context.userId,
+      userName: "Doctor",
+      action: "RESET_STAFF_PASSWORD",
+      entityType: "user",
+      entityId: data.userId,
+    });
+
     return { ok: true };
   });
 
@@ -253,11 +283,20 @@ export const resetStaffPassword = createServerFn({ method: "POST" })
 /** Remove a staff member (doctor only, cannot remove self). */
 export const removeStaff = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) => z.object({ userId: z.string().uuid() }).parse(d))
+  .validator((d) => z.object({ userId: z.string().uuid() }).parse(d))
   .handler(async ({ data, context }) => {
     assertDoctor(context.role);
     if (data.userId === context.userId) throw new Error("You cannot remove your own account.");
     await db.delete(users).where(eq(users.id, data.userId));
+
+    await logAudit({
+      userId: context.userId,
+      userName: "Doctor",
+      action: "REMOVE_STAFF",
+      entityType: "user",
+      entityId: data.userId,
+    });
+
     return { ok: true };
   });
 
@@ -283,7 +322,7 @@ export const getSession = createServerFn({ method: "GET" })
 /** Change current user's own password (any authenticated user). */
 export const changeOwnPassword = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) =>
+  .validator((d) =>
     z.object({ currentPassword: z.string().min(1), newPassword: z.string().min(8).max(72) }).parse(d),
   )
   .handler(async ({ data, context }) => {
@@ -294,5 +333,15 @@ export const changeOwnPassword = createServerFn({ method: "POST" })
     if (!valid) throw new Error("Current password is incorrect.");
     const hashed = await hashPassword(data.newPassword);
     await db.update(users).set({ password: hashed }).where(eq(users.id, context.userId));
+
+    await logAudit({
+      userId: context.userId,
+      userName: context.role,
+      action: "CHANGE_PASSWORD",
+      entityType: "user",
+      entityId: context.userId,
+    });
+
     return { ok: true };
   });
+

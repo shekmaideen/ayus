@@ -18,6 +18,7 @@ import {
   clinicSettings,
 } from "@/lib/schema";
 import { requireAuth, assertDoctor } from "@/lib/auth-middleware";
+import { logAudit } from "@/lib/audit";
 
 const crypto = globalThis.crypto;
 const uid = () => crypto.randomUUID();
@@ -66,7 +67,7 @@ export const exportBackup = createServerFn({ method: "GET" })
 // ─────────────────────────────────────────────────────────────────
 export const importBackup = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) =>
+  .validator((d) =>
     z.object({
       backup: z.object({
         version: z.number(),
@@ -106,6 +107,18 @@ export const importBackup = createServerFn({ method: "POST" })
     if (b.followUps?.length)     await db.insert(followUps).values(b.followUps);
     if (b.templates?.length)     await db.insert(templates).values(b.templates);
 
+    await logAudit({
+      userId: context.userId,
+      userName: "Doctor",
+      action: "RESTORE_DATABASE_BACKUP",
+      entityType: "database",
+      details: {
+        patients: b.patients?.length ?? 0,
+        prescriptions: b.prescriptions?.length ?? 0,
+        bills: b.bills?.length ?? 0,
+      },
+    });
+
     return {
       ok: true,
       counts: {
@@ -137,7 +150,7 @@ const patientRowSchema = z.object({
 
 export const importPatientsCSV = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) =>
+  .validator((d) =>
     z.object({
       rows: z.array(z.any()),
     }).parse(d),
@@ -192,6 +205,16 @@ export const importPatientsCSV = createServerFn({ method: "POST" })
       } catch (err) {
         errors.push({ row: i + 1, error: err instanceof Error ? err.message : "Unknown error" });
       }
+    }
+
+    if (inserted.length > 0) {
+      await logAudit({
+        userId: context.userId,
+        userName: "Doctor",
+        action: "IMPORT_PATIENTS_CSV",
+        entityType: "patient",
+        details: { count: inserted.length, errorCount: errors.length },
+      });
     }
 
     return { inserted: inserted.length, errors };

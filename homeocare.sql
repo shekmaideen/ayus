@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS medicines (
   potencies  JSON          NOT NULL DEFAULT (JSON_ARRAY()),
   stock      INT           NOT NULL DEFAULT 0,
   price      DECIMAL(10,2) NOT NULL DEFAULT 0,
+  active     BOOLEAN       NOT NULL DEFAULT TRUE,
   created_at DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -147,6 +148,22 @@ CREATE TABLE IF NOT EXISTS login_attempts (
   INDEX idx_identifier_time (identifier, attempted_at)
 );
 
+-- ─── Audit Logs (Activity & Compliance) ──────────────────────────
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  user_id     CHAR(36),
+  user_name   VARCHAR(100) NOT NULL DEFAULT '',
+  action      VARCHAR(50)  NOT NULL,
+  entity_type VARCHAR(50)  NOT NULL,
+  entity_id   VARCHAR(100),
+  details     TEXT,
+  created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_user (user_id),
+  INDEX idx_action (action),
+  INDEX idx_created (created_at)
+);
+
 -- ─── Done ────────────────────────────────────────────────────────
 SELECT 'HomeoCare schema created successfully.' AS status;
+
 

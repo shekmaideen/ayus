@@ -1,7 +1,7 @@
 /**
  * src/lib/clinic.functions.ts
  * Server functions for all clinic data (patients, visits, medicines,
- * prescriptions, bills, follow-ups, templates, settings).
+ * prescriptions, bills, follow-ups, templates, settings, audit logs).
  * Called from the Zustand store (src/store/clinic.ts).
  */
 import { createServerFn } from "@tanstack/react-start";
@@ -19,13 +19,15 @@ import {
   templates,
   clinicSettings,
   users,
+  auditLogs,
 } from "@/lib/schema";
 import { requireAuth, assertDoctor } from "@/lib/auth-middleware";
+import { logAudit } from "@/lib/audit";
+import { ensureDailyBackup } from "@/lib/auto-backup";
 
 const crypto = globalThis.crypto;
 const uid = () => crypto.randomUUID();
 const nowStr = () => new Date().toISOString().slice(0, 19).replace("T", " ");
-const todayStr = () => new Date().toISOString().slice(0, 10);
 
 // ─────────────────────────────────────────────────────────────────
 // LOAD ALL (called once on login, populates the Zustand store)
@@ -33,6 +35,9 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 export const loadClinicData = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async ({ context }) => {
+    // Trigger daily auto-backup non-blockingly
+    ensureDailyBackup().catch((err) => console.error("[AutoBackup] error:", err));
+
     const [
       meArray, pats, chs, vis, meds, pres, bls, fus, tpls, settings,
     ] = await Promise.all([
@@ -50,7 +55,18 @@ export const loadClinicData = createServerFn({ method: "GET" })
     const me = meArray[0];
     if (!me) throw new Error("User not found");
     
-    return { me: { id: me.id, role: me.role, fullName: me.fullName }, pats, chs, vis, meds, pres, bls, fus, tpls, settings: settings[0] ?? null };
+    return {
+      me: { id: me.id, role: me.role, fullName: me.fullName },
+      pats,
+      chs,
+      vis,
+      meds,
+      pres,
+      bls,
+      fus,
+      tpls,
+      settings: settings[0] ?? null,
+    };
   });
 
 // ─────────────────────────────────────────────────────────────────
@@ -58,20 +74,28 @@ export const loadClinicData = createServerFn({ method: "GET" })
 // ─────────────────────────────────────────────────────────────────
 export const insertPatient = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) => z.object({
+  .validator((d) => z.object({
     id: z.string(), regNo: z.string(), name: z.string(), age: z.number(),
     gender: z.string(), phone: z.string(), email: z.string(), address: z.string(),
     bloodGroup: z.string(), allergies: z.array(z.string()), occupation: z.string(),
     active: z.boolean(), registeredOn: z.string(),
   }).parse(d))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
     await db.insert(patients).values({ ...data, createdAt: nowStr() });
+    await logAudit({
+      userId: context.userId,
+      userName: context.role === "doctor" ? "Doctor" : "Receptionist",
+      action: "REGISTER_PATIENT",
+      entityType: "patient",
+      entityId: data.id,
+      details: { regNo: data.regNo, name: data.name },
+    });
     return { ok: true };
   });
 
 export const updatePatient = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) => z.object({
+  .validator((d) => z.object({
     id: z.string(),
     patch: z.object({
       name: z.string().optional(), age: z.number().optional(), gender: z.string().optional(),
@@ -80,8 +104,16 @@ export const updatePatient = createServerFn({ method: "POST" })
       occupation: z.string().optional(), active: z.boolean().optional(),
     }),
   }).parse(d))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
     await db.update(patients).set(data.patch).where(eq(patients.id, data.id));
+    await logAudit({
+      userId: context.userId,
+      userName: context.role === "doctor" ? "Doctor" : "Receptionist",
+      action: "UPDATE_PATIENT",
+      entityType: "patient",
+      entityId: data.id,
+      details: data.patch,
+    });
     return { ok: true };
   });
 
@@ -90,15 +122,23 @@ export const updatePatient = createServerFn({ method: "POST" })
 // ─────────────────────────────────────────────────────────────────
 export const upsertCaseHistory = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) => z.object({
+  .validator((d) => z.object({
     patientId: z.string(),
     data: z.record(z.any()),
   }).parse(d))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
     await db
       .insert(caseHistories)
       .values({ patientId: data.patientId, data: data.data, updatedAt: nowStr() })
       .onDuplicateKeyUpdate({ set: { data: data.data, updatedAt: nowStr() } });
+
+    await logAudit({
+      userId: context.userId,
+      userName: context.role === "doctor" ? "Doctor" : "Receptionist",
+      action: "UPDATE_CASE_HISTORY",
+      entityType: "patient",
+      entityId: data.patientId,
+    });
     return { ok: true };
   });
 
@@ -107,7 +147,7 @@ export const upsertCaseHistory = createServerFn({ method: "POST" })
 // ─────────────────────────────────────────────────────────────────
 export const insertVisit = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) => z.object({
+  .validator((d) => z.object({
     id: z.string(), patientId: z.string(), date: z.string(),
     type: z.string(), complaint: z.string(), notes: z.string(),
   }).parse(d))
@@ -121,50 +161,78 @@ export const insertVisit = createServerFn({ method: "POST" })
 // ─────────────────────────────────────────────────────────────────
 export const insertMedicine = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) => z.object({
+  .validator((d) => z.object({
     id: z.string(), name: z.string(), potencies: z.array(z.string()),
     stock: z.number(), price: z.number(),
   }).parse(d))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
+    assertDoctor(context.role);
     await db.insert(medicines).values({
       ...data,
       price: String(data.price),
+      active: true,
       createdAt: nowStr(),
+    });
+    await logAudit({
+      userId: context.userId,
+      userName: "Doctor",
+      action: "ADD_MEDICINE",
+      entityType: "medicine",
+      entityId: data.id,
+      details: { name: data.name, stock: data.stock, price: data.price },
     });
     return { ok: true };
   });
 
 export const updateMedicine = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) => z.object({
+  .validator((d) => z.object({
     id: z.string(),
     patch: z.object({
       name: z.string().optional(), potencies: z.array(z.string()).optional(),
       stock: z.number().optional(), price: z.number().optional(),
+      active: z.boolean().optional(),
     }),
   }).parse(d))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
+    assertDoctor(context.role);
     const patch: Record<string, unknown> = { ...data.patch };
     if (typeof patch["price"] === "number") patch["price"] = String(patch["price"]);
     await db.update(medicines).set(patch).where(eq(medicines.id, data.id));
+    await logAudit({
+      userId: context.userId,
+      userName: "Doctor",
+      action: "UPDATE_MEDICINE",
+      entityType: "medicine",
+      entityId: data.id,
+      details: data.patch,
+    });
     return { ok: true };
   });
 
 export const deleteMedicine = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) => z.object({ id: z.string() }).parse(d))
+  .validator((d) => z.object({ id: z.string() }).parse(d))
   .handler(async ({ data, context }) => {
     assertDoctor(context.role);
-    await db.delete(medicines).where(eq(medicines.id, data.id));
+    // Soft delete: archive medicine so historical prescriptions remain valid
+    await db.update(medicines).set({ active: false }).where(eq(medicines.id, data.id));
+    await logAudit({
+      userId: context.userId,
+      userName: "Doctor",
+      action: "ARCHIVE_MEDICINE",
+      entityType: "medicine",
+      entityId: data.id,
+    });
     return { ok: true };
   });
 
 // ─────────────────────────────────────────────────────────────────
-// PRESCRIPTIONS  (atomic: visit + prescription + bill + stock + follow-up)
+// PRESCRIPTIONS (ATOMIC TRANSACTION: visit + prescription + bill + stock + follow-up)
 // ─────────────────────────────────────────────────────────────────
 export const savePrescriptionFull = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) => z.object({
+  .validator((d) => z.object({
     visit: z.object({
       id: z.string(), patientId: z.string(), date: z.string(),
       type: z.string(), complaint: z.string(), notes: z.string(),
@@ -188,30 +256,51 @@ export const savePrescriptionFull = createServerFn({ method: "POST" })
   }).parse(d))
   .handler(async ({ data, context }) => {
     assertDoctor(context.role);
-    // 1. Insert visit if new
-    if (data.visit) {
-      await db.insert(visits).values({ ...data.visit, createdAt: nowStr() });
-    }
-    // 2. Insert prescription
-    await db.insert(prescriptions).values({
-      ...data.prescription,
-      followUpDate: data.prescription.followUpDate ?? undefined,
-      createdAt: nowStr(),
+
+    // Run all database operations inside a single ACID transaction
+    await db.transaction(async (tx) => {
+      // 1. Insert visit if new
+      if (data.visit) {
+        await tx.insert(visits).values({ ...data.visit, createdAt: nowStr() });
+      }
+      // 2. Insert prescription
+      await tx.insert(prescriptions).values({
+        ...data.prescription,
+        followUpDate: data.prescription.followUpDate ?? undefined,
+        createdAt: nowStr(),
+      });
+      // 3. Insert bill
+      await tx.insert(bills).values({
+        ...data.bill,
+        amountReceived: String(data.bill.amountReceived),
+        createdAt: nowStr(),
+      });
+      // 4. Update medicine stock
+      await Promise.all(
+        data.stockUpdates.map((u) => tx.update(medicines).set({ stock: u.stock }).where(eq(medicines.id, u.id))),
+      );
+      // 5. Insert follow-up if provided
+      if (data.followUp) {
+        await tx.insert(followUps).values({ ...data.followUp, createdAt: nowStr() });
+      }
+      // 6. Log audit event
+      await logAudit(
+        {
+          userId: context.userId,
+          userName: "Doctor",
+          action: "CREATE_PRESCRIPTION",
+          entityType: "prescription",
+          entityId: data.prescription.id,
+          details: {
+            patientId: data.prescription.patientId,
+            invoiceNo: data.bill.invoiceNo,
+            itemCount: data.prescription.items.length,
+          },
+        },
+        tx,
+      );
     });
-    // 3. Insert bill
-    await db.insert(bills).values({
-      ...data.bill,
-      amountReceived: String(data.bill.amountReceived),
-      createdAt: nowStr(),
-    });
-    // 4. Update medicine stock
-    await Promise.all(
-      data.stockUpdates.map((u) => db.update(medicines).set({ stock: u.stock }).where(eq(medicines.id, u.id))),
-    );
-    // 5. Insert follow-up if provided
-    if (data.followUp) {
-      await db.insert(followUps).values({ ...data.followUp, createdAt: nowStr() });
-    }
+
     return { ok: true };
   });
 
@@ -220,25 +309,33 @@ export const savePrescriptionFull = createServerFn({ method: "POST" })
 // ─────────────────────────────────────────────────────────────────
 export const insertBill = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) => z.object({
+  .validator((d) => z.object({
     id: z.string(), invoiceNo: z.string(), patientId: z.string(),
     prescriptionId: z.string().nullable(), date: z.string(), items: z.array(z.unknown()),
     status: z.string(), paymentMode: z.string().nullable(),
     amountReceived: z.number(), readyForPayment: z.boolean(),
   }).parse(d))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
     await db.insert(bills).values({
       ...data,
       prescriptionId: data.prescriptionId ?? undefined,
       amountReceived: String(data.amountReceived),
       createdAt: nowStr(),
     });
+    await logAudit({
+      userId: context.userId,
+      userName: context.role === "doctor" ? "Doctor" : "Receptionist",
+      action: "CREATE_BILL",
+      entityType: "bill",
+      entityId: data.id,
+      details: { invoiceNo: data.invoiceNo, amount: data.amountReceived },
+    });
     return { ok: true };
   });
 
 export const updateBill = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) => z.object({
+  .validator((d) => z.object({
     id: z.string(),
     patch: z.object({
       status: z.string().optional(), paymentMode: z.string().nullable().optional(),
@@ -246,10 +343,19 @@ export const updateBill = createServerFn({ method: "POST" })
       items: z.array(z.unknown()).optional(),
     }),
   }).parse(d))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
     const patch: Record<string, unknown> = { ...data.patch };
     if (typeof patch["amountReceived"] === "number") patch["amountReceived"] = String(patch["amountReceived"]);
     await db.update(bills).set(patch).where(eq(bills.id, data.id));
+
+    await logAudit({
+      userId: context.userId,
+      userName: context.role === "doctor" ? "Doctor" : "Receptionist",
+      action: "UPDATE_BILL",
+      entityType: "bill",
+      entityId: data.id,
+      details: data.patch,
+    });
     return { ok: true };
   });
 
@@ -258,7 +364,7 @@ export const updateBill = createServerFn({ method: "POST" })
 // ─────────────────────────────────────────────────────────────────
 export const insertFollowUp = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) => z.object({
+  .validator((d) => z.object({
     id: z.string(), patientId: z.string(), dueDate: z.string(),
     reason: z.string(), status: z.string(),
   }).parse(d))
@@ -269,7 +375,7 @@ export const insertFollowUp = createServerFn({ method: "POST" })
 
 export const setFollowUpStatusFn = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) => z.object({ id: z.string(), status: z.string() }).parse(d))
+  .validator((d) => z.object({ id: z.string(), status: z.string() }).parse(d))
   .handler(async ({ data }) => {
     await db.update(followUps).set({ status: data.status }).where(eq(followUps.id, data.id));
     return { ok: true };
@@ -280,7 +386,7 @@ export const setFollowUpStatusFn = createServerFn({ method: "POST" })
 // ─────────────────────────────────────────────────────────────────
 export const insertTemplate = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) => z.object({
+  .validator((d) => z.object({
     id: z.string(), name: z.string(), items: z.array(z.unknown()),
   }).parse(d))
   .handler(async ({ data, context }) => {
@@ -294,7 +400,7 @@ export const insertTemplate = createServerFn({ method: "POST" })
 // ─────────────────────────────────────────────────────────────────
 export const updateSettingsFn = createServerFn({ method: "POST" })
   .middleware([requireAuth])
-  .inputValidator((d) => z.object({
+  .validator((d) => z.object({
     consultationFee:    z.number().optional(),
     followUpFee:        z.number().optional(),
     registrationFee:    z.number().optional(),
@@ -319,5 +425,29 @@ export const updateSettingsFn = createServerFn({ method: "POST" })
     if (d["doctorName"]        !== undefined) patch["doctorName"]        = d["doctorName"];
     if (d["logoDataUrl"]       !== undefined) patch["logoDataUrl"]       = d["logoDataUrl"];
     await db.update(clinicSettings).set(patch).where(eq(clinicSettings.id, 1));
+
+    await logAudit({
+      userId: context.userId,
+      userName: "Doctor",
+      action: "UPDATE_SETTINGS",
+      entityType: "clinic_settings",
+      entityId: "1",
+      details: Object.keys(patch),
+    });
     return { ok: true };
+  });
+
+// ─────────────────────────────────────────────────────────────────
+// AUDIT LOGS (Doctor only)
+// ─────────────────────────────────────────────────────────────────
+export const listAuditLogs = createServerFn({ method: "GET" })
+  .middleware([requireAuth])
+  .handler(async ({ context }) => {
+    assertDoctor(context.role);
+    const rows = await db
+      .select()
+      .from(auditLogs)
+      .orderBy(desc(auditLogs.createdAt))
+      .limit(100);
+    return rows;
   });

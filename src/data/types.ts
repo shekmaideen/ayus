@@ -46,6 +46,7 @@ export interface Medicine {
   potencies: string[];
   stock: number;
   price: number;
+  active?: boolean;
 }
 
 export interface PrescriptionItem {
