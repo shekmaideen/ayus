@@ -5,10 +5,11 @@
 import { createServerFn } from "@tanstack/react-start";
 import { eq, or, count } from "drizzle-orm";
 import { z } from "zod";
-import { db, ensureDatabaseColumns } from "@/lib/db";
+import { db, ensureDatabaseColumns, getPool } from "@/lib/db";
 import { users, clinicSettings } from "@/lib/schema";
 import { hashPassword, verifyPassword, signToken } from "@/lib/auth";
 import { requireAuth, assertDoctor } from "@/lib/auth-middleware";
+import type { RowDataPacket } from "mysql2";
 
 const crypto = globalThis.crypto;
 const uid = () => crypto.randomUUID();
@@ -27,18 +28,34 @@ const usernameSchema = z
 export const getSetupStatus = createServerFn({ method: "GET" }).handler(async () => {
   await ensureDatabaseColumns();
 
-  const [userRow] = await db.select({ total: count() }).from(users);
-  const needsSetup = (userRow?.total ?? 0) === 0;
+  let needsSetup = false;
+  try {
+    const [userRow] = await db.select({ total: count() }).from(users);
+    needsSetup = (userRow?.total ?? 0) === 0;
+  } catch {
+    const pool = getPool();
+    const [rawRows] = await pool.query<RowDataPacket[]>("SELECT COUNT(*) AS total FROM users");
+    const total = Number(rawRows[0]?.["total"] ?? 0);
+    needsSetup = total === 0;
+  }
 
-  const [settingsRow] = await db
-    .select({ clinicName: clinicSettings.clinicName, logoDataUrl: clinicSettings.logoDataUrl })
-    .from(clinicSettings)
-    .limit(1);
+  let clinicName: string | null = null;
+  let logoDataUrl: string | null = null;
+  try {
+    const [settingsRow] = await db
+      .select({ clinicName: clinicSettings.clinicName, logoDataUrl: clinicSettings.logoDataUrl })
+      .from(clinicSettings)
+      .limit(1);
+    clinicName = settingsRow?.clinicName ?? null;
+    logoDataUrl = settingsRow?.logoDataUrl ?? null;
+  } catch {
+    // default settings fallback
+  }
 
   return { 
     needsSetup, 
-    clinicName: settingsRow?.clinicName ?? null, 
-    logoDataUrl: settingsRow?.logoDataUrl ?? null 
+    clinicName, 
+    logoDataUrl 
   };
 });
 // ─────────────────────────────────────────────────────────────────
@@ -110,13 +127,46 @@ export const signIn = createServerFn({ method: "POST" })
         .limit(1);
       userRow = rows[0];
     } catch {
-      // Fallback if username column search failed
-      const rows = await db
-        .select()
-        .from(users)
-        .where(eq(users.email, idStr))
-        .limit(1);
-      userRow = rows[0];
+      // Direct raw MySQL query fallback if Drizzle ORM fails due to schema column mismatch
+      const pool = getPool();
+      try {
+        const [rawRows] = await pool.query<RowDataPacket[]>(
+          "SELECT * FROM users WHERE email = ? OR username = ? LIMIT 1",
+          [idStr, idStr],
+        );
+        if (rawRows.length > 0) {
+          const r = rawRows[0];
+          userRow = {
+            id: String(r["id"]),
+            email: String(r["email"]),
+            username: r["username"] ? String(r["username"]) : null,
+            fullName: String(r["full_name"] ?? r["email"]),
+            password: String(r["password"]),
+            role: (r["role"] as "doctor" | "receptionist") ?? "doctor",
+            active: Boolean(r["active"]),
+            createdAt: String(r["created_at"]),
+          };
+        }
+      } catch {
+        // Safe query by email only if username column is missing in DB
+        const [rawRows] = await pool.query<RowDataPacket[]>(
+          "SELECT * FROM users WHERE email = ? LIMIT 1",
+          [idStr],
+        );
+        if (rawRows.length > 0) {
+          const r = rawRows[0];
+          userRow = {
+            id: String(r["id"]),
+            email: String(r["email"]),
+            username: r["username"] ? String(r["username"]) : null,
+            fullName: String(r["full_name"] ?? r["email"]),
+            password: String(r["password"]),
+            role: (r["role"] as "doctor" | "receptionist") ?? "doctor",
+            active: Boolean(r["active"]),
+            createdAt: String(r["created_at"]),
+          };
+        }
+      }
     }
 
     if (!userRow) {

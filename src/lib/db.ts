@@ -10,7 +10,7 @@ import * as schema from "@/lib/schema";
 // Singleton pool — reused across all server function calls
 let _pool: mysql.Pool | undefined;
 
-function getPool(): mysql.Pool {
+export function getPool(): mysql.Pool {
   if (!_pool) {
     _pool = mysql.createPool({
       host: process.env["MYSQL_HOST"] ?? "localhost",
@@ -38,11 +38,16 @@ export async function ensureDatabaseColumns() {
   if (_migrated) return;
   try {
     const pool = getPool();
+
     // 1. Add missing username column to existing users table
     try {
-      await pool.query("ALTER TABLE users ADD COLUMN username VARCHAR(50) UNIQUE AFTER email");
+      await pool.query("ALTER TABLE users ADD COLUMN username VARCHAR(50) NULL AFTER email");
     } catch {
-      // Column already exists or error ignored
+      try {
+        await pool.query("ALTER TABLE users ADD username VARCHAR(50) NULL");
+      } catch {
+        // Column already exists or table issue
+      }
     }
 
     // 2. Ensure appointments table exists
@@ -69,4 +74,5 @@ export async function ensureDatabaseColumns() {
     console.warn("Schema self-healing check skipped:", err);
   }
 }
+
 
