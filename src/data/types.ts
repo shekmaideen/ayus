@@ -40,8 +40,50 @@ export interface Visit {
   notes: string;
 }
 
-export const MEDICINE_POTENCIES = ["Q", "30CH", "200CH", "1M"] as const;
-export type MedicinePotency = (typeof MEDICINE_POTENCIES)[number];
+export const BOTTLE_POTENCIES = [
+  "30CH",
+  "200CH",
+  "1M",
+  "Q",
+  "4X",
+  "3X",
+  "6X",
+  "Other",
+] as const;
+export type BottlePotency = (typeof BOTTLE_POTENCIES)[number];
+
+export const TABLET_POTENCIES = [
+  "3X",
+  "4X",
+  "6X",
+  "Other",
+] as const;
+export type TabletPotency = (typeof TABLET_POTENCIES)[number];
+
+export const MEDICINE_POTENCIES = [
+  "30CH",
+  "200CH",
+  "1M",
+  "Q",
+  "4X",
+  "3X",
+  "6X",
+] as const;
+export type MedicinePotency = string;
+
+export function isPotencyApplicable(formType: string): boolean {
+  if (!formType) return false;
+  const norm = formType.trim().toLowerCase();
+  return norm === "bottle" || norm === "bottol" || norm === "tablet" || norm === "tablets";
+}
+
+export function getPotencyOptions(formType: string): readonly string[] {
+  if (!formType) return [];
+  const norm = formType.trim().toLowerCase();
+  if (norm === "bottle" || norm === "bottol") return BOTTLE_POTENCIES;
+  if (norm === "tablet" || norm === "tablets") return TABLET_POTENCIES;
+  return [];
+}
 
 export const MEDICINE_FORM_TYPES = [
   "Bottle",

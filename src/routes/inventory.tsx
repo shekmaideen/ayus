@@ -41,6 +41,10 @@ import { formatStockEntryDateTime, inr } from "@/lib/format";
 import {
   MEDICINE_FORM_TYPES,
   MEDICINE_POTENCIES,
+  BOTTLE_POTENCIES,
+  TABLET_POTENCIES,
+  isPotencyApplicable,
+  getPotencyOptions,
   type Medicine,
   type MedicineFormType,
   type MedicinePotency,
@@ -65,8 +69,9 @@ export const Route = createFileRoute("/inventory")({
 const defaultForm = {
   name: "",
   brand: "Schwabe",
-  potency: "30CH" as MedicinePotency,
-  formType: "Globules" as MedicineFormType,
+  formType: "Bottle" as MedicineFormType,
+  potency: "30CH",
+  customPotency: "",
   stock: "20",
   price: "10.00",
 };
@@ -102,6 +107,16 @@ function Inventory() {
     }, 1000);
     return () => clearInterval(timer);
   }, [open, editing]);
+
+  const allAvailablePotencies = useMemo(() => {
+    const set = new Set<string>();
+    MEDICINE_POTENCIES.forEach((p) => set.add(p));
+    medicines.forEach((m) => {
+      const p = (m.potency || "").trim();
+      if (p && p !== "-") set.add(p);
+    });
+    return Array.from(set);
+  }, [medicines]);
 
   const rows = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -140,15 +155,59 @@ function Inventory() {
 
   const openEdit = (m: Medicine) => {
     setEditing(m);
+    const formType = (m.formType as MedicineFormType) || "Bottle";
+    const applicable = isPotencyApplicable(formType);
+    let pot = "";
+    let custom = "";
+
+    if (applicable) {
+      const opts = getPotencyOptions(formType);
+      if ((opts as readonly string[]).includes(m.potency)) {
+        pot = m.potency;
+      } else if (m.potency && m.potency.trim() !== "") {
+        pot = "Other";
+        custom = m.potency;
+      } else {
+        pot = formType === "Tablet" ? "3X" : "30CH";
+      }
+    }
+
     setForm({
       name: m.name,
       brand: m.brand || "Schwabe",
-      potency: (m.potency as MedicinePotency) || "30CH",
-      formType: (m.formType as MedicineFormType) || "Globules",
+      formType,
+      potency: pot,
+      customPotency: custom,
       stock: String(m.stock),
       price: String(m.price),
     });
     setOpen(true);
+  };
+
+  const handleFormTypeChange = (newType: MedicineFormType) => {
+    if (newType === "Bottle") {
+      const isCurrentValid = (BOTTLE_POTENCIES as readonly string[]).includes(form.potency);
+      setForm((prev) => ({
+        ...prev,
+        formType: newType,
+        potency: isCurrentValid ? prev.potency : "30CH",
+      }));
+    } else if (newType === "Tablet") {
+      const isCurrentValid = (TABLET_POTENCIES as readonly string[]).includes(form.potency);
+      setForm((prev) => ({
+        ...prev,
+        formType: newType,
+        potency: isCurrentValid ? prev.potency : "3X",
+      }));
+    } else {
+      // For other form/type: potency should not appear!
+      setForm((prev) => ({
+        ...prev,
+        formType: newType,
+        potency: "",
+        customPotency: "",
+      }));
+    }
   };
 
   const openAdjust = (m: Medicine) => {
@@ -167,6 +226,27 @@ function Inventory() {
       toast.error("Medicine Brand Name is required");
       return;
     }
+
+    let finalPotency = "";
+    if (isPotencyApplicable(form.formType)) {
+      if (form.potency === "Other") {
+        finalPotency = form.customPotency.trim();
+        if (!finalPotency) {
+          toast.error(`Please type a manual potency for ${form.formType}`);
+          return;
+        }
+      } else {
+        finalPotency = form.potency.trim();
+        if (!finalPotency) {
+          toast.error(`Please select a potency for ${form.formType}`);
+          return;
+        }
+      }
+    } else {
+      // Other forms: potency does not appear
+      finalPotency = "";
+    }
+
     const numStock = Number(form.stock);
     if (isNaN(numStock) || numStock < 0) {
       toast.error("Stock Quantity must be a valid non-negative number");
@@ -182,20 +262,20 @@ function Inventory() {
       updateMedicine(editing.id, {
         name: form.name.trim(),
         brand: form.brand.trim(),
-        potency: form.potency,
+        potency: finalPotency,
         formType: form.formType,
         stock: Math.round(numStock),
         price: numPrice,
       });
-      toast.success(`Updated ${form.name.trim()} (${form.potency})`);
+      toast.success(`Updated ${form.name.trim()}${finalPotency ? ` (${finalPotency})` : ""}`);
     } else {
       // Check for exact duplicate variant
       const exists = medicines.some(
         (m) =>
           m.name.toLowerCase() === form.name.trim().toLowerCase() &&
           m.brand.toLowerCase() === form.brand.trim().toLowerCase() &&
-          m.potency === form.potency &&
-          m.formType === form.formType,
+          (m.potency || "").trim().toLowerCase() === finalPotency.toLowerCase() &&
+          m.formType.toLowerCase() === form.formType.toLowerCase(),
       );
       if (exists) {
         toast.error("This medicine variant (same name, brand, potency, and form) already exists in inventory.");
@@ -205,13 +285,15 @@ function Inventory() {
       addMedicine({
         name: form.name.trim(),
         brand: form.brand.trim(),
-        potency: form.potency,
+        potency: finalPotency,
         formType: form.formType,
         stock: Math.round(numStock),
         price: numPrice,
-        potencies: [form.potency],
+        potencies: finalPotency ? [finalPotency] : [],
       });
-      toast.success(`Added ${form.name.trim()} (${form.potency} ${form.formType}) to inventory`);
+      toast.success(
+        `Added ${form.name.trim()} (${form.formType}${finalPotency ? ` · ${finalPotency}` : ""}) to inventory`,
+      );
     }
     setOpen(false);
   };
@@ -294,12 +376,12 @@ function Inventory() {
 
             {/* Potency Filter */}
             <Select value={potencyFilter} onValueChange={setPotencyFilter}>
-              <SelectTrigger className="w-[130px] rounded-xl">
+              <SelectTrigger className="w-[140px] rounded-xl">
                 <SelectValue placeholder="Potency" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="max-h-72">
                 <SelectItem value="all">All Potency</SelectItem>
-                {MEDICINE_POTENCIES.map((p) => (
+                {allAvailablePotencies.map((p) => (
                   <SelectItem key={p} value={p}>{p}</SelectItem>
                 ))}
               </SelectContent>
@@ -372,9 +454,13 @@ function Inventory() {
 
                         {/* Potency */}
                         <td className="px-3 py-3">
-                          <Badge variant="outline" className="border-primary/30 bg-primary-soft text-primary font-mono font-medium">
-                            {m.potency || "30CH"}
-                          </Badge>
+                          {m.potency && m.potency.trim() !== "" && m.potency !== "-" ? (
+                            <Badge variant="outline" className="border-primary/30 bg-primary-soft text-primary font-mono font-medium">
+                              {m.potency}
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </td>
 
                         {/* Form / Type */}
@@ -510,46 +596,70 @@ function Inventory() {
               />
             </div>
 
-            {/* 2. Potency & 3. Form / Type */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium">
-                  Potency <span className="text-destructive">*</span>
-                </Label>
-                <Select
-                  value={form.potency}
-                  onValueChange={(v) => setForm({ ...form, potency: v as MedicinePotency })}
-                >
-                  <SelectTrigger className="rounded-xl">
-                    <SelectValue placeholder="Select Potency" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MEDICINE_POTENCIES.map((p) => (
-                      <SelectItem key={p} value={p}>{p}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs font-medium">
-                  Form / Type <span className="text-destructive">*</span>
-                </Label>
-                <Select
-                  value={form.formType}
-                  onValueChange={(v) => setForm({ ...form, formType: v as MedicineFormType })}
-                >
-                  <SelectTrigger className="rounded-xl">
-                    <SelectValue placeholder="Select Form / Type" />
-                  </SelectTrigger>
-                  <SelectContent className="max-h-60 overflow-y-auto">
-                    {MEDICINE_FORM_TYPES.map((f) => (
-                      <SelectItem key={f} value={f}>{f}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+            {/* 3. Form / Type */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">
+                Form / Type <span className="text-destructive">*</span>
+              </Label>
+              <Select
+                value={form.formType}
+                onValueChange={(v) => handleFormTypeChange(v as MedicineFormType)}
+              >
+                <SelectTrigger className="rounded-xl">
+                  <SelectValue placeholder="Select Form / Type" />
+                </SelectTrigger>
+                <SelectContent className="max-h-60 overflow-y-auto">
+                  {MEDICINE_FORM_TYPES.map((f) => (
+                    <SelectItem key={f} value={f}>{f}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
+
+            {/* 2. Potency (Conditionally rendered: ONLY appears if Form/Type is Bottle or Tablet) */}
+            {isPotencyApplicable(form.formType) && (
+              <div className="space-y-2 rounded-xl border border-primary/20 bg-primary-soft/30 p-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-medium">
+                      Potency for {form.formType} <span className="text-destructive">*</span>
+                    </Label>
+                    <span className="text-[10px] text-muted-foreground">Select option or choose Other</span>
+                  </div>
+                  <Select
+                    value={form.potency}
+                    onValueChange={(v) => setForm({ ...form, potency: v })}
+                  >
+                    <SelectTrigger className="rounded-xl bg-background">
+                      <SelectValue placeholder="Select Potency" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {getPotencyOptions(form.formType).map((p) => (
+                        <SelectItem key={p} value={p}>
+                          {p === "Other" ? "Other (to type manually)" : p}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {form.potency === "Other" && (
+                  <div className="space-y-1.5 pt-1 animate-in fade-in duration-150">
+                    <Label htmlFor="m-custom-potency" className="text-[11px] font-medium text-foreground">
+                      Type Manual Potency <span className="text-destructive">*</span>
+                    </Label>
+                    <Input
+                      id="m-custom-potency"
+                      value={form.customPotency}
+                      onChange={(e) => setForm({ ...form, customPotency: e.target.value })}
+                      placeholder={form.formType === "Tablet" ? "e.g. 12X, 30X, 200X..." : "e.g. 10M, 50M, CM, Mother Tincture..."}
+                      className="rounded-xl bg-background font-mono text-xs"
+                      autoFocus
+                    />
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* 4. Stock Quantity & 5. Selling Price */}
             <div className="grid grid-cols-2 gap-3">
@@ -637,7 +747,9 @@ function Inventory() {
               <div className="rounded-xl bg-primary-soft p-3.5 text-xs text-primary-soft-foreground space-y-1">
                 <p className="font-semibold text-sm">{adjustModal.name}</p>
                 <p className="text-muted-foreground">
-                  {adjustModal.brand} · {adjustModal.potency} · {adjustModal.formType}
+                  {adjustModal.brand}
+                  {adjustModal.potency && adjustModal.potency.trim() !== "" && adjustModal.potency !== "-" ? ` · ${adjustModal.potency}` : ""}
+                  {` · ${adjustModal.formType}`}
                 </p>
                 <p className="pt-1 font-mono">Current Stock: <strong>{adjustModal.stock} units</strong></p>
               </div>

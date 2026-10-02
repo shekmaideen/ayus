@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { LeafMark } from "@/components/Logo";
 import { can, useClinic } from "@/store/clinic";
 import { formatDate, inr, todayISO } from "@/lib/format";
-import type { Bill, Prescription, PrescriptionItem } from "@/data/types";
+import { isPotencyApplicable, type Bill, type Prescription, type PrescriptionItem } from "@/data/types";
 import { WhatsAppButton } from "@/components/WhatsAppButton";
 import { buildPrescriptionMessage, openWhatsAppMessage } from "@/lib/whatsapp";
 
@@ -199,7 +199,7 @@ function Builder() {
                     <span className="font-medium">{i.medicineName}</span>
                     {i.instructions && <span className="block text-xs text-muted-foreground">{i.instructions}</span>}
                   </td>
-                  <td>{i.potency}</td>
+                  <td>{i.potency && i.potency.trim() !== "" && i.potency !== "-" ? i.potency : "—"}</td>
                   <td>{i.dosage}</td>
                   <td>{i.frequency}</td>
                   <td>{i.duration}</td>
@@ -313,6 +313,7 @@ function Builder() {
             <AnimatePresence initial={false}>
               {items.map((row) => {
                 const med = medicines.find((m) => m.id === row.medicineId);
+                const hasPotency = med ? isPotencyApplicable(med.formType) : true;
                 return (
                   <motion.div
                     key={row.id}
@@ -333,7 +334,7 @@ function Builder() {
                               update(row.id, {
                                 medicineId: v,
                                 medicineName: m.name,
-                                potency: m.potency || (m.potencies && m.potencies[0]) || "30CH",
+                                potency: m.potency || "",
                               });
                             }
                           }}
@@ -342,7 +343,10 @@ function Builder() {
                           <SelectContent className="max-h-72">
                             {medicines.map((m) => (
                               <SelectItem key={m.id} value={m.id}>
-                                {m.name} · {m.potency || "30CH"} · {m.formType || "Globules"} {m.brand ? `(${m.brand})` : ""} · {m.stock} in stock · ₹{m.price}
+                                {m.name}
+                                {m.potency && m.potency.trim() !== "" && m.potency !== "-" ? ` · ${m.potency}` : ""}
+                                {` · ${m.formType || "Bottle"}`}
+                                {m.brand ? ` (${m.brand})` : ""} · {m.stock} in stock · ₹{m.price}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -350,14 +354,18 @@ function Builder() {
                       </div>
                       <div className="space-y-1.5">
                         <Label className="text-xs">Potency</Label>
-                        <Select value={row.potency} onValueChange={(v) => update(row.id, { potency: v })}>
-                          <SelectTrigger><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {["Q", "30CH", "200CH", "1M"].map((p) => (
-                              <SelectItem key={p} value={p}>{p}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        {!hasPotency ? (
+                          <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3 font-mono text-xs text-muted-foreground">
+                            N/A
+                          </div>
+                        ) : (
+                          <Input
+                            value={row.potency}
+                            onChange={(e) => update(row.id, { potency: e.target.value })}
+                            placeholder="e.g. 30CH, 200CH, 3X..."
+                            className="h-9 font-mono text-xs"
+                          />
+                        )}
                       </div>
                       <div className="space-y-1.5">
                         <Label className="text-xs">Dosage</Label>
