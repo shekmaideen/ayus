@@ -21,8 +21,8 @@ export function getPool(): mysql.Pool {
       password: process.env["MYSQL_PASSWORD"] ?? "",
       database: process.env["MYSQL_DATABASE"] ?? "homeocare",
       waitForConnections: true,
-      connectionLimit: 5,
-      maxIdle: 3,
+      connectionLimit: 20,
+      maxIdle: 10,
       idleTimeout: 10000, // Release idle connections after 10s
       enableKeepAlive: true,
       keepAliveInitialDelay: 0,
