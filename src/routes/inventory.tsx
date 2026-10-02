@@ -44,6 +44,7 @@ import {
   BOTTLE_POTENCIES,
   TABLET_POTENCIES,
   isPotencyApplicable,
+  isBrandApplicable,
   getPotencyOptions,
   type Medicine,
   type MedicineFormType,
@@ -174,7 +175,7 @@ function Inventory() {
 
     setForm({
       name: m.name,
-      brand: m.brand || "Schwabe",
+      brand: isBrandApplicable(formType) ? (m.brand || "Schwabe") : "",
       formType,
       potency: pot,
       customPotency: custom,
@@ -190,6 +191,7 @@ function Inventory() {
       setForm((prev) => ({
         ...prev,
         formType: newType,
+        brand: prev.brand && prev.brand.trim() !== "" ? prev.brand : "Schwabe",
         potency: isCurrentValid ? prev.potency : "30CH",
       }));
     } else if (newType === "Tablet") {
@@ -197,13 +199,15 @@ function Inventory() {
       setForm((prev) => ({
         ...prev,
         formType: newType,
+        brand: "",
         potency: isCurrentValid ? prev.potency : "3X",
       }));
     } else {
-      // For other form/type: potency should not appear!
+      // For other form/type: neither potency nor brand appear!
       setForm((prev) => ({
         ...prev,
         formType: newType,
+        brand: "",
         potency: "",
         customPotency: "",
       }));
@@ -222,10 +226,12 @@ function Inventory() {
       toast.error("Medicine Name is required");
       return;
     }
-    if (!form.brand.trim()) {
-      toast.error("Medicine Brand Name is required");
+    if (isBrandApplicable(form.formType) && !form.brand.trim()) {
+      toast.error("Medicine Brand Name is required for Bottle");
       return;
     }
+
+    const finalBrand = isBrandApplicable(form.formType) ? form.brand.trim() : "";
 
     let finalPotency = "";
     if (isPotencyApplicable(form.formType)) {
@@ -261,7 +267,7 @@ function Inventory() {
     if (editing) {
       updateMedicine(editing.id, {
         name: form.name.trim(),
-        brand: form.brand.trim(),
+        brand: finalBrand,
         potency: finalPotency,
         formType: form.formType,
         stock: Math.round(numStock),
@@ -273,7 +279,9 @@ function Inventory() {
       const exists = medicines.some(
         (m) =>
           m.name.toLowerCase() === form.name.trim().toLowerCase() &&
-          m.brand.toLowerCase() === form.brand.trim().toLowerCase() &&
+          (isBrandApplicable(form.formType)
+            ? (m.brand || "").toLowerCase() === finalBrand.toLowerCase()
+            : true) &&
           (m.potency || "").trim().toLowerCase() === finalPotency.toLowerCase() &&
           m.formType.toLowerCase() === form.formType.toLowerCase(),
       );
@@ -284,7 +292,7 @@ function Inventory() {
 
       addMedicine({
         name: form.name.trim(),
-        brand: form.brand.trim(),
+        brand: finalBrand,
         potency: finalPotency,
         formType: form.formType,
         stock: Math.round(numStock),
@@ -444,12 +452,16 @@ function Inventory() {
                           <p className="font-semibold text-foreground">{m.name}</p>
                         </td>
 
-                        {/* Brand */}
+                        {/* Brand (only for Bottle) */}
                         <td className="px-4 py-3 text-muted-foreground">
-                          <span className="inline-flex items-center gap-1.5 font-medium text-foreground/90">
-                            <Building2 className="h-3.5 w-3.5 text-muted-foreground/70" />
-                            {m.brand || "Standard"}
-                          </span>
+                          {isBrandApplicable(m.formType) && m.brand && m.brand.trim() !== "" ? (
+                            <span className="inline-flex items-center gap-1.5 font-medium text-foreground/90">
+                              <Building2 className="h-3.5 w-3.5 text-muted-foreground/70" />
+                              {m.brand}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
                         </td>
 
                         {/* Potency */}
@@ -582,20 +594,6 @@ function Inventory() {
               />
             </div>
 
-            {/* 9. Medicine Brand Name */}
-            <div className="space-y-1.5">
-              <Label htmlFor="m-brand" className="text-xs font-medium">
-                Medicine Brand Name <span className="text-destructive">*</span>
-              </Label>
-              <Input
-                id="m-brand"
-                value={form.brand}
-                onChange={(e) => setForm({ ...form, brand: e.target.value })}
-                placeholder="e.g. Schwabe, SBL, Dr. Reckeweg"
-                className="rounded-xl"
-              />
-            </div>
-
             {/* 3. Form / Type */}
             <div className="space-y-1.5">
               <Label className="text-xs font-medium">
@@ -615,6 +613,23 @@ function Inventory() {
                 </SelectContent>
               </Select>
             </div>
+
+            {/* 9. Medicine Brand Name (ONLY for Bottle) */}
+            {isBrandApplicable(form.formType) && (
+              <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-200">
+                <Label htmlFor="m-brand" className="text-xs font-medium">
+                  Medicine Brand Name <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="m-brand"
+                  value={form.brand}
+                  onChange={(e) => setForm({ ...form, brand: e.target.value })}
+                  placeholder="e.g. Schwabe, SBL, Dr. Reckeweg"
+                  className="rounded-xl"
+                  autoFocus={!form.brand}
+                />
+              </div>
+            )}
 
             {/* 2. Potency (Conditionally rendered: ONLY appears if Form/Type is Bottle or Tablet) */}
             {isPotencyApplicable(form.formType) && (

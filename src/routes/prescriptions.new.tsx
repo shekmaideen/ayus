@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { LeafMark } from "@/components/Logo";
 import { can, useClinic } from "@/store/clinic";
 import { formatDate, inr, todayISO } from "@/lib/format";
-import { isPotencyApplicable, type Bill, type Prescription, type PrescriptionItem } from "@/data/types";
+import { isPotencyApplicable, isBrandApplicable, type Bill, type Prescription, type PrescriptionItem } from "@/data/types";
 import { WhatsAppButton } from "@/components/WhatsAppButton";
 import { buildPrescriptionMessage, openWhatsAppMessage } from "@/lib/whatsapp";
 
@@ -346,7 +346,7 @@ function Builder() {
                                 {m.name}
                                 {m.potency && m.potency.trim() !== "" && m.potency !== "-" ? ` · ${m.potency}` : ""}
                                 {` · ${m.formType || "Bottle"}`}
-                                {m.brand ? ` (${m.brand})` : ""} · {m.stock} in stock · ₹{m.price}
+                                {isBrandApplicable(m.formType) && m.brand ? ` (${m.brand})` : ""} · {m.stock} in stock · ₹{m.price}
                               </SelectItem>
                             ))}
                           </SelectContent>

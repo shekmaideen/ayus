@@ -164,7 +164,7 @@ export const insertMedicine = createServerFn({ method: "POST" })
   .validator((d) => z.object({
     id: z.string(),
     name: z.string().trim().min(1, "Medicine name is required"),
-    brand: z.string().trim().min(1, "Brand name is required"),
+    brand: z.string().optional().default(""),
     potency: z.string().optional().default(""),
     formType: z.string().trim().min(1, "Form/Type is required"),
     potencies: z.array(z.string()).optional(),
@@ -176,7 +176,7 @@ export const insertMedicine = createServerFn({ method: "POST" })
     await db.insert(medicines).values({
       id: data.id,
       name: data.name,
-      brand: data.brand,
+      brand: data.brand || "",
       potency: data.potency || "",
       formType: data.formType,
       potencies: data.potencies && data.potencies.length > 0 ? data.potencies : (data.potency ? [data.potency] : []),

@@ -77,6 +77,12 @@ export function isPotencyApplicable(formType: string): boolean {
   return norm === "bottle" || norm === "bottol" || norm === "tablet" || norm === "tablets";
 }
 
+export function isBrandApplicable(formType: string): boolean {
+  if (!formType) return false;
+  const norm = formType.trim().toLowerCase();
+  return norm === "bottle" || norm === "bottol";
+}
+
 export function getPotencyOptions(formType: string): readonly string[] {
   if (!formType) return [];
   const norm = formType.trim().toLowerCase();
