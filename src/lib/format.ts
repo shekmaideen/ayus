@@ -43,8 +43,18 @@ export function formatStockEntryDateTime(timestamp?: string | Date | null): {
   if (timestamp instanceof Date) {
     d = timestamp;
   } else {
-    const cleaned = timestamp.includes("T") ? timestamp : timestamp.replace(" ", "T");
-    d = new Date(cleaned);
+    const s = String(timestamp).trim();
+    if (!s) return { date: "—", day: "—", time: "—" };
+
+    // Standardize "YYYY-MM-DD HH:mm:ss" to ISO
+    const cleaned = s.includes("T") ? s : s.replace(" ", "T");
+    // Database timestamps saved via nowStr() are UTC without 'Z'.
+    // If no timezone offset is specified, append 'Z' so it is correctly parsed as UTC
+    // and converted to Asia/Kolkata (IST).
+    const withTz = cleaned.endsWith("Z") || /[+-]\d{2}(:?\d{2})?$/.test(cleaned)
+      ? cleaned
+      : cleaned + "Z";
+    d = new Date(withTz);
   }
 
   if (isNaN(d.getTime())) {
@@ -63,12 +73,15 @@ export function formatStockEntryDateTime(timestamp?: string | Date | null): {
     weekday: "long",
   }).format(d);
 
-  const timeStr = new Intl.DateTimeFormat("en-US", {
+  let timeStr = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Kolkata",
     hour: "2-digit",
     minute: "2-digit",
     hour12: true,
   }).format(d);
+
+  // Ensure uppercase AM/PM
+  timeStr = timeStr.toUpperCase();
 
   return { date: dateStr, day: dayStr, time: timeStr };
 }
