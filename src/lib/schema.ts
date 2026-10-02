@@ -127,10 +127,20 @@ export const followUps = mysqlTable("follow_ups", {
   createdAt: datetime("created_at", { mode: "string" }).notNull(),
 });
 
-// ─── Templates ───────────────────────────────────────────────────
+// ─── Prescription Templates ───────────────────────────────────────
 export const templates = mysqlTable("templates", {
   id:        char("id", { length: 36 }).primaryKey(),
   name:      varchar("name", { length: 200 }).notNull(),
   items:     json("items").$type<any[]>().notNull(),
   createdAt: datetime("created_at", { mode: "string" }).notNull(),
 });
+
+// ─── Login Attempts (Rate Limiting & Lockout) ────────────────────
+export const loginAttempts = mysqlTable("login_attempts", {
+  id:          int("id").autoincrement().primaryKey(),
+  identifier:  varchar("identifier", { length: 255 }).notNull(),
+  ip:          varchar("ip", { length: 45 }),
+  attemptedAt: datetime("attempted_at", { mode: "string" }).notNull(),
+  succeeded:   boolean("succeeded").notNull().default(false),
+});
+

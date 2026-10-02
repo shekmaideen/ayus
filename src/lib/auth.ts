@@ -6,8 +6,12 @@
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 
-const SECRET = process.env["JWT_SECRET"] ?? "change-this-secret";
+const SECRET = process.env["JWT_SECRET"] ?? "default-local-dev-secret-min-32-chars-long";
 const EXPIRES_IN = (process.env["JWT_EXPIRES_IN"] ?? "30d") as jwt.SignOptions["expiresIn"];
+
+if (process.env["NODE_ENV"] === "production" && (!process.env["JWT_SECRET"] || process.env["JWT_SECRET"].length < 32)) {
+  console.warn("SECURITY WARNING: JWT_SECRET should be set and at least 32 characters long in production.");
+}
 
 export interface JwtPayload {
   userId: string;
@@ -26,7 +30,7 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
 
 /** Sign a JWT token containing userId and role. */
 export function signToken(payload: JwtPayload): string {
-  return jwt.sign(payload, SECRET, { expiresIn: "30d" });
+  return jwt.sign(payload, SECRET, { expiresIn: EXPIRES_IN ?? "30d" });
 }
 
 /** Verify a JWT token and return the payload, or throw if invalid/expired. */

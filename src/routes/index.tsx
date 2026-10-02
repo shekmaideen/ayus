@@ -23,7 +23,13 @@ export const Route = createFileRoute("/")(({
   component: LoginPage,
 }));
 
-const errMsg = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong");
+const errMsg = (e: unknown) => {
+  if (e instanceof Error) return e.message;
+  if (typeof e === "object" && e !== null && "message" in e) {
+    return String((e as { message: unknown }).message);
+  }
+  return "Something went wrong";
+};
 
 function LoginPage() {
   const navigate = useNavigate();

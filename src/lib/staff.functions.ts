@@ -3,16 +3,19 @@
  * Server functions for auth and staff management (MySQL + JWT + bcrypt).
  */
 import { createServerFn } from "@tanstack/react-start";
-import { eq, count } from "drizzle-orm";
+import { and, count, eq, gte } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { users, clinicSettings } from "@/lib/schema";
+import { users, clinicSettings, loginAttempts } from "@/lib/schema";
 import { hashPassword, verifyPassword, signToken } from "@/lib/auth";
 import { requireAuth, assertDoctor } from "@/lib/auth-middleware";
 
 const crypto = globalThis.crypto;
 const uid = () => crypto.randomUUID();
 const now = () => new Date().toISOString().slice(0, 19).replace("T", " "); // MySQL DATETIME format
+
+const MAX_FAILED_ATTEMPTS = 5;
+const LOCKOUT_WINDOW_MINUTES = 15;
 
 const usernameSchema = z
   .string()
@@ -80,13 +83,56 @@ export const createFirstDoctor = createServerFn({ method: "POST" })
   });
 
 // ─────────────────────────────────────────────────────────────────
-/** Sign in with email or username. Returns a JWT token. */
+/** Sign in with email or username. Returns a JWT token with rate-limit protection. */
 export const signIn = createServerFn({ method: "POST" })
   .inputValidator((d) =>
     z.object({ identifier: z.string().trim().min(1), password: z.string().min(1).max(72) }).parse(d),
   )
   .handler(async ({ data }) => {
-    const fail = new Error("Wrong email/username or password");
+    const normalized = data.identifier.trim().toLowerCase();
+    const windowStart = new Date(Date.now() - LOCKOUT_WINDOW_MINUTES * 60 * 1000)
+      .toISOString()
+      .slice(0, 19)
+      .replace("T", " ");
+
+    // Check failed attempts in the last 15 minutes
+    const [stats] = await db
+      .select({ failedCount: count() })
+      .from(loginAttempts)
+      .where(
+        and(
+          eq(loginAttempts.identifier, normalized),
+          eq(loginAttempts.succeeded, false),
+          gte(loginAttempts.attemptedAt, windowStart),
+        ),
+      );
+
+    const failedCount = stats?.failedCount ?? 0;
+    if (failedCount >= MAX_FAILED_ATTEMPTS) {
+      throw new Error(
+        `Too many failed attempts. Account is temporarily locked for ${LOCKOUT_WINDOW_MINUTES} minutes for security. Please try again later.`,
+      );
+    }
+
+    const recordFailedAttempt = async () => {
+      await db.insert(loginAttempts).values({
+        identifier: normalized,
+        attemptedAt: now(),
+        succeeded: false,
+      });
+      const remaining = Math.max(0, MAX_FAILED_ATTEMPTS - (failedCount + 1));
+      if (remaining === 0) {
+        throw new Error(
+          `Too many failed attempts. Account is now locked for ${LOCKOUT_WINDOW_MINUTES} minutes.`,
+        );
+      }
+      if (remaining <= 2) {
+        throw new Error(
+          `Wrong email/username or password. ${remaining} attempt${remaining === 1 ? "" : "s"} remaining before lockout.`,
+        );
+      }
+      throw new Error("Wrong email/username or password.");
+    };
 
     // Look up by email or username
     const isEmail = data.identifier.includes("@");
@@ -97,11 +143,31 @@ export const signIn = createServerFn({ method: "POST" })
       .limit(1);
 
     const user = rows[0];
-    if (!user) throw fail;
-    if (!user.active) throw new Error("This account has been deactivated.");
+    if (!user) {
+      await recordFailedAttempt();
+      throw new Error("Wrong email/username or password.");
+    }
+    if (!user.active) {
+      throw new Error("This account has been deactivated. Please contact the administrator.");
+    }
 
     const ok = await verifyPassword(data.password, user.password);
-    if (!ok) throw fail;
+    if (!ok) {
+      await recordFailedAttempt();
+      throw new Error("Wrong email/username or password.");
+    }
+
+    // Success: clear failed attempts for this identifier
+    await db
+      .delete(loginAttempts)
+      .where(eq(loginAttempts.identifier, normalized));
+
+    // Record successful login
+    await db.insert(loginAttempts).values({
+      identifier: normalized,
+      attemptedAt: now(),
+      succeeded: true,
+    });
 
     const token = signToken({ userId: user.id, role: user.role });
     return {
@@ -111,6 +177,7 @@ export const signIn = createServerFn({ method: "POST" })
       userName: user.fullName || user.email,
     };
   });
+
 
 // ─────────────────────────────────────────────────────────────────
 /** List all staff members (doctor only). */

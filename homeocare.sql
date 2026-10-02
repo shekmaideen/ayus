@@ -137,5 +137,16 @@ CREATE TABLE IF NOT EXISTS templates (
   created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ─── Login Attempts (Rate Limiting & Lockout) ────────────────────
+CREATE TABLE IF NOT EXISTS login_attempts (
+  id           INT AUTO_INCREMENT PRIMARY KEY,
+  identifier   VARCHAR(255) NOT NULL,
+  ip           VARCHAR(45)  DEFAULT NULL,
+  attempted_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  succeeded    BOOLEAN      NOT NULL DEFAULT FALSE,
+  INDEX idx_identifier_time (identifier, attempted_at)
+);
+
 -- ─── Done ────────────────────────────────────────────────────────
 SELECT 'HomeoCare schema created successfully.' AS status;
+

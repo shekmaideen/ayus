@@ -4,15 +4,18 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
+  useNavigate,
   HeadContent,
   Scripts,
   type ErrorComponentProps,
 } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
+import { toast } from "sonner";
 
 import appCss from "../styles.css?url";
 import { Toaster } from "@/components/ui/sonner";
 import { useClinic } from "@/store/clinic";
+import { useIdleTimeout } from "@/hooks/use-idle-timeout";
 
 function NotFoundComponent() {
   return (
@@ -134,6 +137,27 @@ function AuthSync() {
   return null;
 }
 
+function IdleSessionWatcher() {
+  const navigate = useNavigate();
+  const loggedIn = useClinic((s) => s.loggedIn);
+  const loaded = useClinic((s) => s.loaded);
+
+  useIdleTimeout({
+    enabled: loaded && loggedIn,
+    onTimeout: () => {
+      sessionStorage.removeItem("hc_token");
+      document.cookie = "hc_token=; path=/; max-age=0";
+      useClinic.getState().clear();
+      toast.info("Session expired", {
+        description: "You have been logged out due to 15 minutes of inactivity.",
+      });
+      navigate({ to: "/", replace: true });
+    },
+  });
+
+  return null;
+}
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
@@ -141,6 +165,7 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       <ThemeSync />
       <AuthSync />
+      <IdleSessionWatcher />
       {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <Outlet />
       <Toaster position="top-right" richColors />
