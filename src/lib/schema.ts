@@ -83,6 +83,9 @@ export const visits = mysqlTable("visits", {
 export const medicines = mysqlTable("medicines", {
   id:        char("id", { length: 36 }).primaryKey(),
   name:      varchar("name", { length: 200 }).notNull(),
+  brand:     varchar("brand", { length: 150 }).notNull().default("Standard"),
+  potency:   varchar("potency", { length: 50 }).notNull().default("30CH"),
+  formType:  varchar("form_type", { length: 50 }).notNull().default("Globules"),
   potencies: json("potencies").$type<string[]>().notNull(),
   stock:     int("stock").notNull().default(0),
   price:     decimal("price", { precision: 10, scale: 2 }).notNull().default("0"),

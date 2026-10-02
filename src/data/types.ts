@@ -40,13 +40,41 @@ export interface Visit {
   notes: string;
 }
 
+export const MEDICINE_POTENCIES = ["Q", "30CH", "200CH", "1M"] as const;
+export type MedicinePotency = (typeof MEDICINE_POTENCIES)[number];
+
+export const MEDICINE_FORM_TYPES = [
+  "Bottle",
+  "Drops",
+  "Tablet",
+  "Oil",
+  "Shampoo",
+  "Conditioner",
+  "Syrup",
+  "3X",
+  "4X",
+  "6X",
+  "Spray",
+  "Soap",
+  "Ointment",
+  "Cream",
+  "Capsules",
+  "Tonic",
+  "Globules",
+] as const;
+export type MedicineFormType = (typeof MEDICINE_FORM_TYPES)[number];
+
 export interface Medicine {
   id: string;
   name: string;
-  potencies: string[];
+  brand: string;
+  potency: string;
+  formType: string;
+  potencies?: string[];
   stock: number;
   price: number;
   active?: boolean;
+  createdAt?: string;
 }
 
 export interface PrescriptionItem {

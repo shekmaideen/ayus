@@ -49,8 +49,16 @@ const toVisit = (r: any): Visit => ({
   complaint: r.complaint, notes: r.notes,
 });
 const toMedicine = (r: any): Medicine => ({
-  id: r.id, name: r.name, potencies: r.potencies ?? [], stock: r.stock, price: Number(r.price),
+  id: r.id,
+  name: r.name,
+  brand: r.brand ?? "Standard",
+  potency: r.potency ?? (r.potencies?.[0] ?? "30CH"),
+  formType: r.formType ?? r.form_type ?? "Globules",
+  potencies: r.potencies ?? [r.potency ?? "30CH"],
+  stock: Number(r.stock ?? 0),
+  price: Number(r.price ?? 0),
   active: r.active !== undefined ? Boolean(r.active) : true,
+  createdAt: r.createdAt ?? r.created_at ?? "",
 });
 const toPrescription = (r: any): Prescription => ({
   id: r.id, patientId: r.patientId ?? r.patient_id, visitId: r.visitId ?? r.visit_id ?? "",
@@ -134,6 +142,7 @@ interface ClinicState {
 
   addMedicine: (m: Omit<Medicine, "id">) => void;
   updateMedicine: (id: string, patch: Partial<Medicine>) => void;
+  adjustStock: (id: string, delta: number, reason: string) => void;
   deleteMedicine: (id: string) => void;
 
   savePrescription: (input: {
@@ -254,13 +263,42 @@ export const useClinic = create<ClinicState>()(
       },
 
       addMedicine: (m) => {
-        const med: Medicine = { ...m, id: uid() };
+        const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+        const med: Medicine = {
+          ...m,
+          id: uid(),
+          brand: m.brand || "Standard",
+          potency: m.potency || "30CH",
+          formType: m.formType || "Globules",
+          potencies: m.potencies || [m.potency || "30CH"],
+          createdAt: m.createdAt || now,
+        };
         set((s) => ({ medicines: [med, ...s.medicines] }));
-        save(sf().then((fn) => fn.insertMedicine({ data: med })));
+        save(sf().then((fn) => fn.insertMedicine({
+          data: {
+            id: med.id,
+            name: med.name,
+            brand: med.brand,
+            potency: med.potency,
+            formType: med.formType,
+            potencies: med.potencies,
+            stock: med.stock,
+            price: med.price,
+          },
+        })));
       },
       updateMedicine: (id, patch) => {
         set((s) => ({ medicines: s.medicines.map((m) => (m.id === id ? { ...m, ...patch } : m)) }));
         save(sf().then((m) => m.updateMedicine({ data: { id, patch } })));
+      },
+      adjustStock: (id, delta, reason) => {
+        const med = get().medicines.find((m) => m.id === id);
+        if (!med) return;
+        const newStock = Math.max(0, med.stock + delta);
+        set((s) => ({
+          medicines: s.medicines.map((m) => (m.id === id ? { ...m, stock: newStock } : m)),
+        }));
+        save(sf().then((fn) => fn.adjustMedicineStock({ data: { id, newStock, delta, reason } })));
       },
       deleteMedicine: (id) => {
         set((s) => ({ medicines: s.medicines.filter((m) => m.id !== id) }));
@@ -310,11 +348,15 @@ export const useClinic = create<ClinicState>()(
             ? { label: "Consultation Fee", qty: 1, rate: s.consultationFee }
             : { label: "Follow-up Fee",    qty: 1, rate: s.followUpFee },
           ...(isNewPatient ? [{ label: "New Registration Fee", qty: 1, rate: s.registrationFee }] : []),
-          ...items.map((it) => ({
-            label: `${it.medicineName} ${it.potency}`,
-            qty:   it.quantity,
-            rate:  get().medicines.find((m) => m.id === it.medicineId)?.price ?? 0,
-          })),
+          ...items.map((it) => {
+            const med = get().medicines.find((m) => m.id === it.medicineId);
+            const formDesc = med?.formType ? ` (${med.formType})` : "";
+            return {
+              label: `${it.medicineName} ${it.potency}${formDesc}`,
+              qty:   it.quantity,
+              rate:  med?.price ?? 0,
+            };
+          }),
         ];
         const bill: Bill = {
           id: uid(), invoiceNo: nextInvoice(get().bills), patientId, prescriptionId: prescription.id,

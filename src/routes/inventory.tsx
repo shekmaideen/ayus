@@ -1,11 +1,26 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Package, Pencil, Plus, Search, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+  AlertTriangle,
+  ArrowUpDown,
+  Building2,
+  Calendar,
+  CheckCircle2,
+  Clock,
+  Layers,
+  Package,
+  Pencil,
+  Plus,
+  Search,
+  SlidersHorizontal,
+  Trash2,
+  XCircle,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AppShell, PageTitle } from "@/components/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,18 +34,25 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { can, useClinic } from "@/store/clinic";
-import { inr } from "@/lib/format";
-import type { Medicine } from "@/data/types";
+import { formatStockEntryDateTime, inr } from "@/lib/format";
+import {
+  MEDICINE_FORM_TYPES,
+  MEDICINE_POTENCIES,
+  type Medicine,
+  type MedicineFormType,
+  type MedicinePotency,
+} from "@/data/types";
 
 export const Route = createFileRoute("/inventory")({
   head: () => ({
     meta: [
       { title: "Inventory — HomeoCare Clinic Manager" },
-      { name: "description", content: "Homeopathic medicine stock levels, prices and low-stock alerts." },
+      { name: "description", content: "Homeopathic medicine stock levels, potencies, forms, and entry history." },
       { property: "og:title", content: "Inventory — HomeoCare Clinic Manager" },
-      { property: "og:description", content: "Homeopathic medicine stock levels, prices and low-stock alerts." },
+      { property: "og:description", content: "Homeopathic medicine stock levels, potencies, forms, and entry history." },
     ],
   }),
   component: () => (
@@ -40,63 +62,201 @@ export const Route = createFileRoute("/inventory")({
   ),
 });
 
-const empty = { name: "", potencies: "6C, 30C, 200C", stock: "20", price: "10" };
+const defaultForm = {
+  name: "",
+  brand: "Schwabe",
+  potency: "30CH" as MedicinePotency,
+  formType: "Globules" as MedicineFormType,
+  stock: "20",
+  price: "10.00",
+};
 
 function Inventory() {
-  const { medicines, settings, role, addMedicine, updateMedicine, deleteMedicine } = useClinic();
+  const { medicines, settings, role, addMedicine, updateMedicine, adjustStock, deleteMedicine } = useClinic();
   const editable = can(role, "inventory") === "full";
+
   const [q, setQ] = useState("");
-  const [lowOnly, setLowOnly] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<"all" | "in" | "low" | "out">("all");
+  const [potencyFilter, setPotencyFilter] = useState<string>("all");
+  const [formTypeFilter, setFormTypeFilter] = useState<string>("all");
+
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Medicine | null>(null);
-  const [form, setForm] = useState(empty);
+  const [form, setForm] = useState(defaultForm);
   const [confirm, setConfirm] = useState<Medicine | null>(null);
+
+  // Adjust stock state
+  const [adjustModal, setAdjustModal] = useState<Medicine | null>(null);
+  const [adjustType, setAdjustType] = useState<"add" | "remove" | "set">("add");
+  const [adjustQty, setAdjustQty] = useState("10");
+  const [adjustReason, setAdjustReason] = useState("New shipment received");
+
+  // Real-time IST preview for Stock Entry Date/Day/Time
+  const [livePreview, setLivePreview] = useState(() => formatStockEntryDateTime(new Date()));
+
+  useEffect(() => {
+    if (!open || editing) return;
+    setLivePreview(formatStockEntryDateTime(new Date()));
+    const timer = setInterval(() => {
+      setLivePreview(formatStockEntryDateTime(new Date()));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [open, editing]);
 
   const rows = useMemo(() => {
     const t = q.trim().toLowerCase();
     return medicines
-      .filter((m) => !t || m.name.toLowerCase().includes(t))
-      .filter((m) => !lowOnly || m.stock < settings.lowStockThreshold);
-  }, [medicines, q, lowOnly, settings.lowStockThreshold]);
+      .filter((m) => {
+        if (!t) return true;
+        return (
+          m.name.toLowerCase().includes(t) ||
+          m.brand.toLowerCase().includes(t) ||
+          m.potency.toLowerCase().includes(t) ||
+          m.formType.toLowerCase().includes(t)
+        );
+      })
+      .filter((m) => {
+        if (statusFilter === "low") return m.stock > 0 && m.stock < settings.lowStockThreshold;
+        if (statusFilter === "out") return m.stock === 0;
+        if (statusFilter === "in") return m.stock >= settings.lowStockThreshold;
+        return true;
+      })
+      .filter((m) => {
+        if (potencyFilter === "all") return true;
+        return m.potency === potencyFilter;
+      })
+      .filter((m) => {
+        if (formTypeFilter === "all") return true;
+        return m.formType === formTypeFilter;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [medicines, q, statusFilter, potencyFilter, formTypeFilter, settings.lowStockThreshold]);
 
   const openNew = () => {
     setEditing(null);
-    setForm(empty);
+    setForm(defaultForm);
     setOpen(true);
   };
 
   const openEdit = (m: Medicine) => {
     setEditing(m);
-    setForm({ name: m.name, potencies: m.potencies.join(", "), stock: String(m.stock), price: String(m.price) });
+    setForm({
+      name: m.name,
+      brand: m.brand || "Schwabe",
+      potency: (m.potency as MedicinePotency) || "30CH",
+      formType: (m.formType as MedicineFormType) || "Globules",
+      stock: String(m.stock),
+      price: String(m.price),
+    });
     setOpen(true);
   };
 
-  const save = () => {
-    if (!form.name.trim()) { toast.error("Medicine name is required"); return; }
-    const payload = {
-      name: form.name.trim(),
-      potencies: form.potencies.split(",").map((p) => p.trim()).filter(Boolean),
-      stock: Number(form.stock) || 0,
-      price: Number(form.price) || 0,
-    };
+  const openAdjust = (m: Medicine) => {
+    setAdjustModal(m);
+    setAdjustType("add");
+    setAdjustQty("10");
+    setAdjustReason("New shipment received");
+  };
+
+  const handleSave = () => {
+    if (!form.name.trim()) {
+      toast.error("Medicine Name is required");
+      return;
+    }
+    if (!form.brand.trim()) {
+      toast.error("Medicine Brand Name is required");
+      return;
+    }
+    const numStock = Number(form.stock);
+    if (isNaN(numStock) || numStock < 0) {
+      toast.error("Stock Quantity must be a valid non-negative number");
+      return;
+    }
+    const numPrice = Number(form.price);
+    if (isNaN(numPrice) || numPrice < 0) {
+      toast.error("Selling Price must be a valid non-negative number");
+      return;
+    }
+
     if (editing) {
-      updateMedicine(editing.id, payload);
-      toast.success("Medicine updated");
+      updateMedicine(editing.id, {
+        name: form.name.trim(),
+        brand: form.brand.trim(),
+        potency: form.potency,
+        formType: form.formType,
+        stock: Math.round(numStock),
+        price: numPrice,
+      });
+      toast.success(`Updated ${form.name.trim()} (${form.potency})`);
     } else {
-      addMedicine(payload);
-      toast.success("Medicine added");
+      // Check for exact duplicate variant
+      const exists = medicines.some(
+        (m) =>
+          m.name.toLowerCase() === form.name.trim().toLowerCase() &&
+          m.brand.toLowerCase() === form.brand.trim().toLowerCase() &&
+          m.potency === form.potency &&
+          m.formType === form.formType,
+      );
+      if (exists) {
+        toast.error("This medicine variant (same name, brand, potency, and form) already exists in inventory.");
+        return;
+      }
+
+      addMedicine({
+        name: form.name.trim(),
+        brand: form.brand.trim(),
+        potency: form.potency,
+        formType: form.formType,
+        stock: Math.round(numStock),
+        price: numPrice,
+        potencies: [form.potency],
+      });
+      toast.success(`Added ${form.name.trim()} (${form.potency} ${form.formType}) to inventory`);
     }
     setOpen(false);
   };
+
+  const handleAdjustSubmit = () => {
+    if (!adjustModal) return;
+    const qty = Number(adjustQty);
+    if (isNaN(qty) || qty <= 0) {
+      toast.error("Please enter a valid quantity greater than zero");
+      return;
+    }
+    if (!adjustReason.trim()) {
+      toast.error("Please provide an adjustment reason");
+      return;
+    }
+
+    let delta = 0;
+    if (adjustType === "add") {
+      delta = qty;
+    } else if (adjustType === "remove") {
+      if (qty > adjustModal.stock) {
+        toast.error(`Cannot remove ${qty} units. Current stock is only ${adjustModal.stock}.`);
+        return;
+      }
+      delta = -qty;
+    } else if (adjustType === "set") {
+      delta = qty - adjustModal.stock;
+    }
+
+    adjustStock(adjustModal.id, delta, adjustReason.trim());
+    toast.success(`Stock adjusted for ${adjustModal.name} (${delta >= 0 ? "+" + delta : delta})`);
+    setAdjustModal(null);
+  };
+
+  const lowCount = medicines.filter((m) => m.stock > 0 && m.stock < settings.lowStockThreshold).length;
+  const outCount = medicines.filter((m) => m.stock === 0).length;
 
   return (
     <>
       <PageTitle
         title="Medicine inventory"
-        subtitle={`${medicines.length} medicines · ${medicines.filter((m) => m.stock < settings.lowStockThreshold).length} low on stock`}
+        subtitle={`${medicines.length} medicine variants · ${lowCount} low stock · ${outCount} out of stock`}
         action={
           editable ? (
-            <Button className="rounded-xl" onClick={openNew}>
+            <Button className="rounded-xl shadow-sm" onClick={openNew}>
               <Plus className="mr-2 h-4 w-4" /> Add medicine
             </Button>
           ) : (
@@ -105,108 +265,493 @@ function Inventory() {
         }
       />
 
-      <div className="card-soft p-4">
-        <div className="flex flex-wrap items-center gap-4">
-          <div className="relative min-w-[14rem] flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search medicines" className="rounded-xl pl-9" />
-          </div>
-          <div className="flex items-center gap-2">
-            <Switch id="low" checked={lowOnly} onCheckedChange={setLowOnly} />
-            <Label htmlFor="low" className="text-sm">Low stock only</Label>
+      <div className="space-y-4">
+        {/* Search & Filter Toolbar */}
+        <div className="card-soft p-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative min-w-[16rem] flex-1">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search by medicine, brand, potency, or form..."
+                className="rounded-xl pl-9"
+              />
+            </div>
+
+            {/* Status Filter */}
+            <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as any)}>
+              <SelectTrigger className="w-[140px] rounded-xl">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Status</SelectItem>
+                <SelectItem value="in">In Stock</SelectItem>
+                <SelectItem value="low">Low Stock</SelectItem>
+                <SelectItem value="out">Out of Stock</SelectItem>
+              </SelectContent>
+            </Select>
+
+            {/* Potency Filter */}
+            <Select value={potencyFilter} onValueChange={setPotencyFilter}>
+              <SelectTrigger className="w-[130px] rounded-xl">
+                <SelectValue placeholder="Potency" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Potency</SelectItem>
+                {MEDICINE_POTENCIES.map((p) => (
+                  <SelectItem key={p} value={p}>{p}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+
+            {/* Form / Type Filter */}
+            <Select value={formTypeFilter} onValueChange={setFormTypeFilter}>
+              <SelectTrigger className="w-[150px] rounded-xl">
+                <SelectValue placeholder="Form / Type" />
+              </SelectTrigger>
+              <SelectContent className="max-h-72">
+                <SelectItem value="all">All Forms</SelectItem>
+                {MEDICINE_FORM_TYPES.map((f) => (
+                  <SelectItem key={f} value={f}>{f}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
-        {rows.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 py-16 text-center">
-            <Package className="h-10 w-10 text-muted-foreground" strokeWidth={1.2} />
-            <p className="text-sm text-muted-foreground">No medicines match this filter.</p>
+        {/* Inventory Table (Requirement 12) */}
+        <div className="card-soft overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b bg-muted/30 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-3.5">Medicine Name</th>
+                  <th className="px-4 py-3.5">Brand</th>
+                  <th className="px-3 py-3.5">Potency</th>
+                  <th className="px-3 py-3.5">Form / Type</th>
+                  <th className="px-4 py-3.5 text-right">Stock</th>
+                  <th className="px-4 py-3.5 text-right">Price</th>
+                  <th className="px-4 py-3.5">Stock Entry Date</th>
+                  <th className="px-4 py-3.5">Stock Entry Time</th>
+                  <th className="px-4 py-3.5 text-center">Status</th>
+                  {editable && <th className="px-4 py-3.5 text-right">Actions</th>}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/60">
+                {rows.length === 0 ? (
+                  <tr>
+                    <td colSpan={editable ? 10 : 9} className="py-16 text-center">
+                      <div className="flex flex-col items-center gap-2">
+                        <Package className="h-10 w-10 text-muted-foreground/60" strokeWidth={1.3} />
+                        <p className="font-medium text-foreground">No medicines found</p>
+                        <p className="text-xs text-muted-foreground">Try adjusting your search query or filters.</p>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  rows.map((m) => {
+                    const isOut = m.stock === 0;
+                    const isLow = m.stock > 0 && m.stock < settings.lowStockThreshold;
+                    const entry = formatStockEntryDateTime(m.createdAt);
+
+                    return (
+                      <tr key={m.id} className="hover:bg-muted/30 transition-colors">
+                        {/* Medicine Name */}
+                        <td className="px-4 py-3">
+                          <p className="font-semibold text-foreground">{m.name}</p>
+                        </td>
+
+                        {/* Brand */}
+                        <td className="px-4 py-3 text-muted-foreground">
+                          <span className="inline-flex items-center gap-1.5 font-medium text-foreground/90">
+                            <Building2 className="h-3.5 w-3.5 text-muted-foreground/70" />
+                            {m.brand || "Standard"}
+                          </span>
+                        </td>
+
+                        {/* Potency */}
+                        <td className="px-3 py-3">
+                          <Badge variant="outline" className="border-primary/30 bg-primary-soft text-primary font-mono font-medium">
+                            {m.potency || "30CH"}
+                          </Badge>
+                        </td>
+
+                        {/* Form / Type */}
+                        <td className="px-3 py-3">
+                          <Badge variant="secondary" className="font-normal text-xs">
+                            {m.formType || "Globules"}
+                          </Badge>
+                        </td>
+
+                        {/* Stock */}
+                        <td className="px-4 py-3 text-right">
+                          <div className="inline-flex flex-col items-end">
+                            <span className={`font-semibold font-mono ${isOut ? "text-destructive" : isLow ? "text-warning-foreground" : "text-foreground"}`}>
+                              {m.stock}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground">units</span>
+                          </div>
+                        </td>
+
+                        {/* Selling Price */}
+                        <td className="px-4 py-3 text-right font-medium font-mono text-foreground">
+                          {inr(m.price)}
+                        </td>
+
+                        {/* Stock Entry Date & Day */}
+                        <td className="px-4 py-3">
+                          <div className="flex flex-col text-xs">
+                            <span className="font-medium text-foreground">{entry.date}</span>
+                            <span className="text-[11px] text-muted-foreground">{entry.day}</span>
+                          </div>
+                        </td>
+
+                        {/* Stock Entry Time */}
+                        <td className="px-4 py-3 text-xs text-muted-foreground font-mono">
+                          {entry.time}
+                        </td>
+
+                        {/* Status (Requirement 12) */}
+                        <td className="px-4 py-3 text-center">
+                          {isOut ? (
+                            <Badge variant="outline" className="border-destructive/40 bg-danger-soft text-destructive text-[11px] font-semibold">
+                              OUT OF STOCK
+                            </Badge>
+                          ) : isLow ? (
+                            <Badge variant="outline" className="border-warning/40 bg-warning-soft text-warning-foreground text-[11px] font-semibold">
+                              LOW STOCK
+                            </Badge>
+                          ) : (
+                            <Badge variant="outline" className="border-success/40 bg-success-soft text-success text-[11px] font-semibold">
+                              IN STOCK
+                            </Badge>
+                          )}
+                        </td>
+
+                        {/* Actions */}
+                        {editable && (
+                          <td className="px-4 py-3 text-right">
+                            <div className="inline-flex items-center gap-1.5">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 rounded-lg px-2.5 text-xs font-medium"
+                                onClick={() => openAdjust(m)}
+                              >
+                                <ArrowUpDown className="mr-1 h-3.5 w-3.5" /> Adjust
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 w-8 rounded-lg p-0 text-muted-foreground hover:text-foreground"
+                                onClick={() => openEdit(m)}
+                                aria-label={`Edit ${m.name}`}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 w-8 rounded-lg p-0 text-destructive/70 hover:text-destructive hover:bg-destructive/10"
+                                onClick={() => setConfirm(m)}
+                                aria-label={`Delete ${m.name}`}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
-        ) : (
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {rows.map((m) => {
-              const low = m.stock < settings.lowStockThreshold;
-              return (
-                <div key={m.id} className="card-lift rounded-xl border p-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="font-medium">{m.name}</p>
-                      <p className="text-xs text-muted-foreground">{inr(m.price)} per unit</p>
-                    </div>
-                    {low && <Badge className="bg-destructive text-destructive-foreground hover:bg-destructive">Low stock</Badge>}
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {m.potencies.map((p) => (
-                      <Badge key={p} variant="secondary" className="text-[11px]">{p}</Badge>
-                    ))}
-                  </div>
-                  <div className="mt-4">
-                    <div className="mb-1 flex justify-between text-xs">
-                      <span className="text-muted-foreground">Stock</span>
-                      <span className="font-medium">{m.stock} units</span>
-                    </div>
-                    <Progress value={Math.min(100, (m.stock / (settings.lowStockThreshold * 5)) * 100)} className="h-1.5" />
-                  </div>
-                  {editable && (
-                    <div className="mt-4 flex gap-2">
-                      <Button size="sm" variant="outline" className="flex-1" onClick={() => openEdit(m)}>
-                        <Pencil className="mr-1.5 h-3.5 w-3.5" /> Edit
-                      </Button>
-                      <Button size="sm" variant="ghost" aria-label={`Delete ${m.name}`} onClick={() => setConfirm(m)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
+        </div>
       </div>
 
+      {/* Add / Edit Medicine Dialog (Requirement 11) */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{editing ? "Edit medicine" : "Add medicine"}</DialogTitle></DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="m-name">Name</Label>
-              <Input id="m-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+        <DialogContent className="max-w-lg rounded-2xl p-6">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl">
+              {editing ? "Edit medicine" : "Add Medicine"}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4 pt-2">
+            {/* 1. Medicine Name */}
+            <div className="space-y-1.5">
+              <Label htmlFor="m-name" className="text-xs font-medium">
+                Medicine Name <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="m-name"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="e.g. Arnica Montana"
+                className="rounded-xl"
+              />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="m-pot">Potencies (comma separated)</Label>
-              <Input id="m-pot" value={form.potencies} onChange={(e) => setForm({ ...form, potencies: e.target.value })} />
+
+            {/* 9. Medicine Brand Name */}
+            <div className="space-y-1.5">
+              <Label htmlFor="m-brand" className="text-xs font-medium">
+                Medicine Brand Name <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="m-brand"
+                value={form.brand}
+                onChange={(e) => setForm({ ...form, brand: e.target.value })}
+                placeholder="e.g. Schwabe, SBL, Dr. Reckeweg"
+                className="rounded-xl"
+              />
             </div>
+
+            {/* 2. Potency & 3. Form / Type */}
             <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label htmlFor="m-stock">Stock</Label>
-                <Input id="m-stock" type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} />
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">
+                  Potency <span className="text-destructive">*</span>
+                </Label>
+                <Select
+                  value={form.potency}
+                  onValueChange={(v) => setForm({ ...form, potency: v as MedicinePotency })}
+                >
+                  <SelectTrigger className="rounded-xl">
+                    <SelectValue placeholder="Select Potency" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MEDICINE_POTENCIES.map((p) => (
+                      <SelectItem key={p} value={p}>{p}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="m-price">Price (₹)</Label>
-                <Input id="m-price" type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
+
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">
+                  Form / Type <span className="text-destructive">*</span>
+                </Label>
+                <Select
+                  value={form.formType}
+                  onValueChange={(v) => setForm({ ...form, formType: v as MedicineFormType })}
+                >
+                  <SelectTrigger className="rounded-xl">
+                    <SelectValue placeholder="Select Form / Type" />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-60 overflow-y-auto">
+                    {MEDICINE_FORM_TYPES.map((f) => (
+                      <SelectItem key={f} value={f}>{f}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
-            <Button className="w-full rounded-xl" onClick={save}>{editing ? "Save changes" : "Add medicine"}</Button>
+
+            {/* 4. Stock Quantity & 5. Selling Price */}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="m-stock" className="text-xs font-medium">
+                  Stock Quantity <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="m-stock"
+                  type="number"
+                  min={0}
+                  value={form.stock}
+                  onChange={(e) => setForm({ ...form, stock: e.target.value })}
+                  placeholder="e.g. 20"
+                  className="rounded-xl font-mono"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="m-price" className="text-xs font-medium">
+                  Selling Price (₹) <span className="text-destructive">*</span>
+                </Label>
+                <Input
+                  id="m-price"
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={form.price}
+                  onChange={(e) => setForm({ ...form, price: e.target.value })}
+                  placeholder="e.g. 10.00"
+                  className="rounded-xl font-mono"
+                />
+              </div>
+            </div>
+
+            {/* 6, 7, 8. Automatically Generated Stock Entry Timestamp Preview */}
+            <div className="rounded-xl border bg-muted/40 p-3.5 space-y-2">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                <Clock className="h-3.5 w-3.5 text-primary" />
+                {editing ? "Stock Entry Timestamp" : "Automatically Generated Entry Details"}
+              </p>
+              <div className="grid grid-cols-3 gap-2 text-xs">
+                <div>
+                  <span className="block text-[11px] text-muted-foreground">Stock Entry Date</span>
+                  <span className="font-semibold text-foreground">
+                    {editing ? formatStockEntryDateTime(editing.createdAt).date : livePreview.date}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-[11px] text-muted-foreground">Stock Entry Day</span>
+                  <span className="font-semibold text-foreground">
+                    {editing ? formatStockEntryDateTime(editing.createdAt).day : livePreview.day}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-[11px] text-muted-foreground">Stock Entry Time</span>
+                  <span className="font-semibold text-foreground font-mono">
+                    {editing ? formatStockEntryDateTime(editing.createdAt).time : livePreview.time}
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
+
+          <DialogFooter className="mt-4 gap-2 sm:gap-0">
+            <Button variant="ghost" className="rounded-xl" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button className="rounded-xl" onClick={handleSave}>
+              {editing ? "Save changes" : "Add Medicine"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
+      {/* Adjust Stock Dialog (Requirement 16) */}
+      <Dialog open={!!adjustModal} onOpenChange={(o) => !o && setAdjustModal(null)}>
+        <DialogContent className="max-w-md rounded-2xl p-6">
+          <DialogHeader>
+            <DialogTitle className="font-display text-xl">Adjust stock</DialogTitle>
+          </DialogHeader>
+
+          {adjustModal && (
+            <div className="space-y-4 pt-2">
+              <div className="rounded-xl bg-primary-soft p-3.5 text-xs text-primary-soft-foreground space-y-1">
+                <p className="font-semibold text-sm">{adjustModal.name}</p>
+                <p className="text-muted-foreground">
+                  {adjustModal.brand} · {adjustModal.potency} · {adjustModal.formType}
+                </p>
+                <p className="pt-1 font-mono">Current Stock: <strong>{adjustModal.stock} units</strong></p>
+              </div>
+
+              {/* Action Type */}
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Adjustment Type</Label>
+                <div className="grid grid-cols-3 gap-2">
+                  <Button
+                    type="button"
+                    variant={adjustType === "add" ? "default" : "outline"}
+                    className="rounded-xl text-xs"
+                    onClick={() => setAdjustType("add")}
+                  >
+                    + Add Stock
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={adjustType === "remove" ? "default" : "outline"}
+                    className="rounded-xl text-xs"
+                    onClick={() => setAdjustType("remove")}
+                  >
+                    - Remove Stock
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={adjustType === "set" ? "default" : "outline"}
+                    className="rounded-xl text-xs"
+                    onClick={() => setAdjustType("set")}
+                  >
+                    = Set Exact
+                  </Button>
+                </div>
+              </div>
+
+              {/* Quantity */}
+              <div className="space-y-1.5">
+                <Label htmlFor="adj-qty" className="text-xs font-medium">
+                  {adjustType === "set" ? "New Exact Stock Count" : "Quantity to " + (adjustType === "add" ? "Add" : "Remove")}
+                </Label>
+                <Input
+                  id="adj-qty"
+                  type="number"
+                  min={1}
+                  value={adjustQty}
+                  onChange={(e) => setAdjustQty(e.target.value)}
+                  className="rounded-xl font-mono text-base"
+                />
+              </div>
+
+              {/* Reason */}
+              <div className="space-y-1.5">
+                <Label htmlFor="adj-reason" className="text-xs font-medium">
+                  Reason for Adjustment
+                </Label>
+                <Select value={adjustReason} onValueChange={setAdjustReason}>
+                  <SelectTrigger className="rounded-xl">
+                    <SelectValue placeholder="Select reason" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="New shipment received">New shipment received</SelectItem>
+                    <SelectItem value="Physical audit count correction">Physical audit count correction</SelectItem>
+                    <SelectItem value="Damaged or expired bottles removed">Damaged or expired bottles removed</SelectItem>
+                    <SelectItem value="Dispensed outside prescription system">Dispensed outside prescription</SelectItem>
+                    <SelectItem value="Patient return / restock">Patient return / restock</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Stock Preview */}
+              <div className="rounded-xl bg-muted p-3 text-xs flex justify-between items-center">
+                <span className="text-muted-foreground">Updated Stock:</span>
+                <span className="font-semibold text-sm font-mono">
+                  {adjustType === "add"
+                    ? `${adjustModal.stock} + ${Number(adjustQty) || 0} = ${adjustModal.stock + (Number(adjustQty) || 0)} units`
+                    : adjustType === "remove"
+                      ? `${adjustModal.stock} - ${Number(adjustQty) || 0} = ${Math.max(0, adjustModal.stock - (Number(adjustQty) || 0))} units`
+                      : `${Number(adjustQty) || 0} units`}
+                </span>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="mt-4 gap-2 sm:gap-0">
+            <Button variant="ghost" className="rounded-xl" onClick={() => setAdjustModal(null)}>
+              Cancel
+            </Button>
+            <Button className="rounded-xl" onClick={handleAdjustSubmit}>
+              Update Stock
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete / Archive Confirmation Dialog */}
       <AlertDialog open={!!confirm} onOpenChange={(o) => !o && setConfirm(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {confirm?.name}?</AlertDialogTitle>
-            <AlertDialogDescription>This removes the medicine from the inventory.</AlertDialogDescription>
+            <AlertDialogTitle>Archive {confirm?.name} ({confirm?.potency})?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This archives the medicine from active inventory. Historical prescriptions and visits will still preserve their medicine records.
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => {
                 if (confirm) deleteMedicine(confirm.id);
                 setConfirm(null);
-                toast.success("Medicine deleted");
+                toast.success("Medicine archived");
               }}
             >
-              Delete
+              Archive
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

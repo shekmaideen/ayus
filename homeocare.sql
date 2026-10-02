@@ -80,6 +80,9 @@ CREATE TABLE IF NOT EXISTS visits (
 CREATE TABLE IF NOT EXISTS medicines (
   id         CHAR(36)      PRIMARY KEY DEFAULT (UUID()),
   name       VARCHAR(200)  NOT NULL,
+  brand      VARCHAR(150)  NOT NULL DEFAULT 'Standard',
+  potency    VARCHAR(50)   NOT NULL DEFAULT '30CH',
+  form_type  VARCHAR(50)   NOT NULL DEFAULT 'Globules',
   potencies  JSON          NOT NULL DEFAULT (JSON_ARRAY()),
   stock      INT           NOT NULL DEFAULT 0,
   price      DECIMAL(10,2) NOT NULL DEFAULT 0,

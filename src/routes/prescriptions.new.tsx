@@ -328,15 +328,21 @@ function Builder() {
                         <Select
                           value={row.medicineId}
                           onValueChange={(v) => {
-                            const m = medicines.find((x) => x.id === v)!;
-                            update(row.id, { medicineId: v, medicineName: m.name, potency: m.potencies[0]! });
+                            const m = medicines.find((x) => x.id === v);
+                            if (m) {
+                              update(row.id, {
+                                medicineId: v,
+                                medicineName: m.name,
+                                potency: m.potency || (m.potencies && m.potencies[0]) || "30CH",
+                              });
+                            }
                           }}
                         >
                           <SelectTrigger><SelectValue placeholder="Search inventory" /></SelectTrigger>
                           <SelectContent className="max-h-72">
                             {medicines.map((m) => (
                               <SelectItem key={m.id} value={m.id}>
-                                {m.name} · {m.stock} in stock
+                                {m.name} · {m.potency || "30CH"} · {m.formType || "Globules"} {m.brand ? `(${m.brand})` : ""} · {m.stock} in stock · ₹{m.price}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -347,7 +353,7 @@ function Builder() {
                         <Select value={row.potency} onValueChange={(v) => update(row.id, { potency: v })}>
                           <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            {(med?.potencies ?? ["6C", "30C", "200C", "1M", "Q"]).map((p) => (
+                            {["Q", "30CH", "200CH", "1M"].map((p) => (
                               <SelectItem key={p} value={p}>{p}</SelectItem>
                             ))}
                           </SelectContent>

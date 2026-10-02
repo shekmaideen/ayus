@@ -162,13 +162,25 @@ export const insertVisit = createServerFn({ method: "POST" })
 export const insertMedicine = createServerFn({ method: "POST" })
   .middleware([requireAuth])
   .validator((d) => z.object({
-    id: z.string(), name: z.string(), potencies: z.array(z.string()),
-    stock: z.number(), price: z.number(),
+    id: z.string(),
+    name: z.string().trim().min(1, "Medicine name is required"),
+    brand: z.string().trim().min(1, "Brand name is required"),
+    potency: z.string().trim().min(1, "Potency is required"),
+    formType: z.string().trim().min(1, "Form/Type is required"),
+    potencies: z.array(z.string()).optional(),
+    stock: z.number().min(0, "Stock cannot be negative"),
+    price: z.number().min(0, "Price cannot be negative"),
   }).parse(d))
   .handler(async ({ data, context }) => {
     assertDoctor(context.role);
     await db.insert(medicines).values({
-      ...data,
+      id: data.id,
+      name: data.name,
+      brand: data.brand,
+      potency: data.potency,
+      formType: data.formType,
+      potencies: data.potencies && data.potencies.length > 0 ? data.potencies : [data.potency],
+      stock: data.stock,
       price: String(data.price),
       active: true,
       createdAt: nowStr(),
@@ -179,7 +191,14 @@ export const insertMedicine = createServerFn({ method: "POST" })
       action: "ADD_MEDICINE",
       entityType: "medicine",
       entityId: data.id,
-      details: { name: data.name, stock: data.stock, price: data.price },
+      details: {
+        name: data.name,
+        brand: data.brand,
+        potency: data.potency,
+        formType: data.formType,
+        stock: data.stock,
+        price: data.price,
+      },
     });
     return { ok: true };
   });
@@ -189,8 +208,13 @@ export const updateMedicine = createServerFn({ method: "POST" })
   .validator((d) => z.object({
     id: z.string(),
     patch: z.object({
-      name: z.string().optional(), potencies: z.array(z.string()).optional(),
-      stock: z.number().optional(), price: z.number().optional(),
+      name: z.string().optional(),
+      brand: z.string().optional(),
+      potency: z.string().optional(),
+      formType: z.string().optional(),
+      potencies: z.array(z.string()).optional(),
+      stock: z.number().min(0).optional(),
+      price: z.number().min(0).optional(),
       active: z.boolean().optional(),
     }),
   }).parse(d))
@@ -206,6 +230,32 @@ export const updateMedicine = createServerFn({ method: "POST" })
       entityType: "medicine",
       entityId: data.id,
       details: data.patch,
+    });
+    return { ok: true };
+  });
+
+export const adjustMedicineStock = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .validator((d) => z.object({
+    id: z.string(),
+    newStock: z.number().min(0, "Stock cannot be negative"),
+    delta: z.number(),
+    reason: z.string().trim().min(1, "Adjustment reason is required"),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    assertDoctor(context.role);
+    await db.update(medicines).set({ stock: data.newStock }).where(eq(medicines.id, data.id));
+    await logAudit({
+      userId: context.userId,
+      userName: "Doctor",
+      action: "ADJUST_STOCK",
+      entityType: "medicine",
+      entityId: data.id,
+      details: {
+        newStock: data.newStock,
+        delta: data.delta,
+        reason: data.reason,
+      },
     });
     return { ok: true };
   });
