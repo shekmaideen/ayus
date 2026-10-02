@@ -7,24 +7,29 @@ import { drizzle } from "drizzle-orm/mysql2";
 import mysql from "mysql2/promise";
 import * as schema from "@/lib/schema";
 
-// Singleton pool — reused across all server function calls
-let _pool: mysql.Pool | undefined;
+declare global {
+  // eslint-disable-next-line no-var
+  var _mysqlPool: mysql.Pool | undefined;
+}
 
 export function getPool(): mysql.Pool {
-  if (!_pool) {
-    _pool = mysql.createPool({
+  if (!globalThis._mysqlPool) {
+    globalThis._mysqlPool = mysql.createPool({
       host: process.env["MYSQL_HOST"] ?? "localhost",
       port: Number(process.env["MYSQL_PORT"] ?? 3306),
       user: process.env["MYSQL_USER"] ?? "root",
       password: process.env["MYSQL_PASSWORD"] ?? "",
       database: process.env["MYSQL_DATABASE"] ?? "homeocare",
       waitForConnections: true,
-      connectionLimit: 10,
-      // Return dates as strings (YYYY-MM-DD) so they match what the app expects
+      connectionLimit: 5,
+      maxIdle: 3,
+      idleTimeout: 10000, // Release idle connections after 10s
+      enableKeepAlive: true,
+      keepAliveInitialDelay: 0,
       dateStrings: true,
     });
   }
-  return _pool;
+  return globalThis._mysqlPool;
 }
 
 export const db = drizzle(getPool(), { schema, mode: "default" });
