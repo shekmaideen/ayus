@@ -15,6 +15,7 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
+mysql_data/
 
 # Wrangler / Cloudflare
 .wrangler/
