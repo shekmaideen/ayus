@@ -298,7 +298,7 @@ export const savePrescriptionFull = createServerFn({ method: "POST" })
       status: z.string(), paymentMode: z.string().nullable(),
       amountReceived: z.number(), readyForPayment: z.boolean(),
     }),
-    stockUpdates: z.array(z.object({ id: z.string(), stock: z.number() })),
+    stockUpdates: z.array(z.object({ id: z.string(), stock: z.number() })).optional(),
     followUp: z.object({
       id: z.string(), patientId: z.string(), dueDate: z.string(),
       reason: z.string(), status: z.string(),
@@ -325,10 +325,7 @@ export const savePrescriptionFull = createServerFn({ method: "POST" })
         amountReceived: String(data.bill.amountReceived),
         createdAt: nowStr(),
       });
-      // 4. Update medicine stock
-      await Promise.all(
-        data.stockUpdates.map((u) => tx.update(medicines).set({ stock: u.stock }).where(eq(medicines.id, u.id))),
-      );
+      // (Prescriptions & Billing do NOT change inventory stock)
       // 5. Insert follow-up if provided
       if (data.followUp) {
         await tx.insert(followUps).values({ ...data.followUp, createdAt: nowStr() });

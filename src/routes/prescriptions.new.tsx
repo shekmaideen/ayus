@@ -103,7 +103,7 @@ function Builder() {
       date: visitDate,
     });
     setSaved(result);
-    toast.success("Prescription saved · stock updated · bill generated");
+    toast.success("Prescription saved · bill generated");
   };
 
   const handleSendWhatsApp = () => {
@@ -239,7 +239,7 @@ function Builder() {
     <>
       <PageTitle
         title={refillSource ? "Refill prescription" : "Prescription builder"}
-        subtitle="Medicines are matched against live inventory stock"
+        subtitle="Select medicines from inventory"
         action={
           <Button className="rounded-xl" onClick={handleSave}>
             <Save className="mr-2 h-4 w-4" /> Save prescription

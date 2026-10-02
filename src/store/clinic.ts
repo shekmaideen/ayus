@@ -329,16 +329,6 @@ export const useClinic = create<ClinicState>()(
           id: uid(), patientId, visitId: vid, date, items, followUpDate, isRefill: !!isRefill, notes,
         };
 
-        // Deduct stock optimistically
-        const changedMeds: { id: string; stock: number }[] = [];
-        const updatedMeds = get().medicines.map((m) => {
-          const used = items.filter((i) => i.medicineId === m.id).reduce((s, i) => s + i.quantity, 0);
-          if (!used) return m;
-          const next = { ...m, stock: Math.max(0, m.stock - used) };
-          changedMeds.push({ id: m.id, stock: next.stock });
-          return next;
-        });
-
         // Build bill
         const s = get().settings;
         const priorVisits = get().visits.filter((v) => v.patientId === patientId).length;
@@ -367,9 +357,9 @@ export const useClinic = create<ClinicState>()(
           ? { id: uid(), patientId, dueDate: followUpDate, reason: state.caseHistories[patientId]?.chiefComplaint ?? `Review for ${patient.name}`, status: "Pending" }
           : null;
 
+        // Note: Prescriptions and Billing do NOT change inventory stock
         set({
           prescriptions: [prescription, ...get().prescriptions],
-          medicines: updatedMeds,
           bills: [bill, ...get().bills],
           followUps: followUp ? [followUp, ...get().followUps] : get().followUps,
         });
@@ -379,7 +369,6 @@ export const useClinic = create<ClinicState>()(
             visit: newVisit ? { id: newVisit.id, patientId, date, type: newVisit.type, complaint: newVisit.complaint, notes: newVisit.notes } : undefined,
             prescription: { id: prescription.id, patientId, visitId: vid, date, items, followUpDate, isRefill: !!isRefill, notes },
             bill: { id: bill.id, invoiceNo: bill.invoiceNo, patientId, prescriptionId: prescription.id, date, items: billItems, status: "Pending", paymentMode: null, amountReceived: 0, readyForPayment: true },
-            stockUpdates: changedMeds,
             followUp: followUp ? { id: followUp.id, patientId, dueDate: followUp.dueDate, reason: followUp.reason, status: followUp.status } : undefined,
           },
         })));
