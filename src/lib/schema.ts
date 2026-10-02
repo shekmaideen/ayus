@@ -64,7 +64,7 @@ export const patients = mysqlTable("patients", {
 // ─── Case Histories ──────────────────────────────────────────────
 export const caseHistories = mysqlTable("case_histories", {
   patientId: char("patient_id", { length: 36 }).primaryKey(),
-  data:      json("data").$type<Record<string, unknown>>().notNull(),
+  data:      json("data").$type<Record<string, any>>().notNull(),
   updatedAt: datetime("updated_at", { mode: "string" }).notNull(),
 });
 
@@ -95,7 +95,7 @@ export const prescriptions = mysqlTable("prescriptions", {
   patientId:     char("patient_id", { length: 36 }).notNull(),
   visitId:       char("visit_id", { length: 36 }),
   date:          date("date", { mode: "string" }).notNull(),
-  items:         json("items").$type<unknown[]>().notNull(),
+  items:         json("items").$type<any[]>().notNull(),
   followUpDate:  date("follow_up_date", { mode: "string" }),
   isRefill:      boolean("is_refill").notNull().default(false),
   notes:         varchar("notes", { length: 1000 }).notNull().default(""),
@@ -109,7 +109,7 @@ export const bills = mysqlTable("bills", {
   patientId:        char("patient_id", { length: 36 }).notNull(),
   prescriptionId:   char("prescription_id", { length: 36 }),
   date:             date("date", { mode: "string" }).notNull(),
-  items:            json("items").$type<unknown[]>().notNull(),
+  items:            json("items").$type<any[]>().notNull(),
   status:           varchar("status", { length: 20 }).notNull().default("Pending"),
   paymentMode:      varchar("payment_mode", { length: 20 }),
   amountReceived:   decimal("amount_received", { precision: 10, scale: 2 }).notNull().default("0"),
@@ -131,19 +131,6 @@ export const followUps = mysqlTable("follow_ups", {
 export const templates = mysqlTable("templates", {
   id:        char("id", { length: 36 }).primaryKey(),
   name:      varchar("name", { length: 200 }).notNull(),
-  items:     json("items").$type<unknown[]>().notNull(),
+  items:     json("items").$type<any[]>().notNull(),
   createdAt: datetime("created_at", { mode: "string" }).notNull(),
 });
-
-// ─── Appointments ────────────────────────────────────────────────
-export const appointments = mysqlTable("appointments", {
-  id:        char("id", { length: 36 }).primaryKey(),
-  patientId: char("patient_id", { length: 36 }).notNull(),
-  doctorId:  char("doctor_id", { length: 36 }),
-  date:      date("date", { mode: "string" }).notNull(),
-  time:      varchar("time", { length: 20 }).notNull().default("10:00 AM"),
-  status:    varchar("status", { length: 20 }).notNull().default("Scheduled"),
-  notes:     varchar("notes", { length: 500 }).notNull().default(""),
-  createdAt: datetime("created_at", { mode: "string" }).notNull(),
-});
-

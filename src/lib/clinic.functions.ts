@@ -19,7 +19,6 @@ import {
   templates,
   clinicSettings,
   users,
-  appointments,
 } from "@/lib/schema";
 import { requireAuth, assertDoctor } from "@/lib/auth-middleware";
 
@@ -34,14 +33,6 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 export const loadClinicData = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async ({ context }) => {
-    // Safely query appointments table in case migration hasn't been executed on DB yet
-    let appts: unknown[] = [];
-    try {
-      appts = await db.select().from(appointments).orderBy(asc(appointments.date));
-    } catch {
-      appts = [];
-    }
-
     const [
       meArray, pats, chs, vis, meds, pres, bls, fus, tpls, settings,
     ] = await Promise.all([
@@ -59,43 +50,8 @@ export const loadClinicData = createServerFn({ method: "GET" })
     const me = meArray[0];
     if (!me) throw new Error("User not found");
     
-    return { me: { id: me.id, role: me.role, fullName: me.fullName }, pats, chs, vis, meds, pres, bls, fus, tpls, settings: settings[0] ?? null, appts };
+    return { me: { id: me.id, role: me.role, fullName: me.fullName }, pats, chs, vis, meds, pres, bls, fus, tpls, settings: settings[0] ?? null };
   });
-
-// ─────────────────────────────────────────────────────────────────
-// APPOINTMENTS
-// ─────────────────────────────────────────────────────────────────
-export const insertAppointment = createServerFn({ method: "POST" })
-  .middleware([requireAuth])
-  .inputValidator((d) => z.object({
-    id: z.string(), patientId: z.string(), doctorId: z.string().nullable().optional(),
-    date: z.string(), time: z.string(), status: z.string(), notes: z.string(),
-  }).parse(d))
-  .handler(async ({ data }) => {
-    await db.insert(appointments).values({
-      ...data,
-      doctorId: data.doctorId ?? undefined,
-      createdAt: nowStr(),
-    });
-    return { ok: true };
-  });
-
-export const updateAppointmentStatusFn = createServerFn({ method: "POST" })
-  .middleware([requireAuth])
-  .inputValidator((d) => z.object({ id: z.string(), status: z.string() }).parse(d))
-  .handler(async ({ data }) => {
-    await db.update(appointments).set({ status: data.status }).where(eq(appointments.id, data.id));
-    return { ok: true };
-  });
-
-export const deleteAppointmentFn = createServerFn({ method: "POST" })
-  .middleware([requireAuth])
-  .inputValidator((d) => z.object({ id: z.string() }).parse(d))
-  .handler(async ({ data }) => {
-    await db.delete(appointments).where(eq(appointments.id, data.id));
-    return { ok: true };
-  });
-
 
 // ─────────────────────────────────────────────────────────────────
 // PATIENTS
@@ -136,7 +92,7 @@ export const upsertCaseHistory = createServerFn({ method: "POST" })
   .middleware([requireAuth])
   .inputValidator((d) => z.object({
     patientId: z.string(),
-    data: z.record(z.unknown()),
+    data: z.record(z.any()),
   }).parse(d))
   .handler(async ({ data }) => {
     await db
@@ -189,7 +145,7 @@ export const updateMedicine = createServerFn({ method: "POST" })
   }).parse(d))
   .handler(async ({ data }) => {
     const patch: Record<string, unknown> = { ...data.patch };
-    if (typeof patch.price === "number") patch.price = String(patch.price);
+    if (typeof patch["price"] === "number") patch["price"] = String(patch["price"]);
     await db.update(medicines).set(patch).where(eq(medicines.id, data.id));
     return { ok: true };
   });
@@ -292,7 +248,7 @@ export const updateBill = createServerFn({ method: "POST" })
   }).parse(d))
   .handler(async ({ data }) => {
     const patch: Record<string, unknown> = { ...data.patch };
-    if (typeof patch.amountReceived === "number") patch.amountReceived = String(patch.amountReceived);
+    if (typeof patch["amountReceived"] === "number") patch["amountReceived"] = String(patch["amountReceived"]);
     await db.update(bills).set(patch).where(eq(bills.id, data.id));
     return { ok: true };
   });
@@ -352,15 +308,16 @@ export const updateSettingsFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     assertDoctor(context.role);
     const patch: Record<string, unknown> = {};
-    if (data.consultationFee   !== undefined) patch.consultationFee   = String(data.consultationFee);
-    if (data.followUpFee       !== undefined) patch.followUpFee       = String(data.followUpFee);
-    if (data.registrationFee   !== undefined) patch.registrationFee   = String(data.registrationFee);
-    if (data.lowStockThreshold !== undefined) patch.lowStockThreshold = data.lowStockThreshold;
-    if (data.clinicName        !== undefined) patch.clinicName        = data.clinicName;
-    if (data.address           !== undefined) patch.address           = data.address;
-    if (data.phone             !== undefined) patch.phone             = data.phone;
-    if (data.doctorName        !== undefined) patch.doctorName        = data.doctorName;
-    if (data.logoDataUrl       !== undefined) patch.logoDataUrl       = data.logoDataUrl;
+    const d = data as Record<string, unknown>;
+    if (d["consultationFee"]   !== undefined) patch["consultationFee"]   = String(d["consultationFee"]);
+    if (d["followUpFee"]       !== undefined) patch["followUpFee"]       = String(d["followUpFee"]);
+    if (d["registrationFee"]   !== undefined) patch["registrationFee"]   = String(d["registrationFee"]);
+    if (d["lowStockThreshold"] !== undefined) patch["lowStockThreshold"] = d["lowStockThreshold"];
+    if (d["clinicName"]        !== undefined) patch["clinicName"]        = d["clinicName"];
+    if (d["address"]           !== undefined) patch["address"]           = d["address"];
+    if (d["phone"]             !== undefined) patch["phone"]             = d["phone"];
+    if (d["doctorName"]        !== undefined) patch["doctorName"]        = d["doctorName"];
+    if (d["logoDataUrl"]       !== undefined) patch["logoDataUrl"]       = d["logoDataUrl"];
     await db.update(clinicSettings).set(patch).where(eq(clinicSettings.id, 1));
     return { ok: true };
   });

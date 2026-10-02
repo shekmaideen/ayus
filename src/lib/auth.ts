@@ -26,7 +26,7 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
 
 /** Sign a JWT token containing userId and role. */
 export function signToken(payload: JwtPayload): string {
-  return jwt.sign(payload, SECRET, { expiresIn: EXPIRES_IN });
+  return jwt.sign(payload, SECRET, { expiresIn: "30d" });
 }
 
 /** Verify a JWT token and return the payload, or throw if invalid/expired. */

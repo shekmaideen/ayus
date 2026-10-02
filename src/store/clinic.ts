@@ -12,8 +12,6 @@ import { persist } from "zustand/middleware";
 import { toast } from "sonner";
 import { useServerFn } from "@tanstack/react-start";
 import type {
-  Appointment,
-  AppointmentStatus,
   Bill,
   BillItem,
   CaseHistory,
@@ -69,10 +67,6 @@ const toFollowUp = (r: any): FollowUp => ({
   id: r.id, patientId: r.patientId ?? r.patient_id, dueDate: r.dueDate ?? r.due_date,
   reason: r.reason, status: r.status,
 });
-const toAppointment = (r: any): Appointment => ({
-  id: r.id, patientId: r.patientId ?? r.patient_id, doctorId: r.doctorId ?? r.doctor_id ?? null,
-  date: r.date, time: r.time, status: r.status, notes: r.notes,
-});
 const toSettings = (r: any): ClinicSettings => ({
   consultationFee: Number(r.consultationFee ?? r.consultation_fee),
   followUpFee:     Number(r.followUpFee ?? r.follow_up_fee),
@@ -123,7 +117,6 @@ interface ClinicState {
   prescriptions: Prescription[];
   bills: Bill[];
   followUps: FollowUp[];
-  appointments: Appointment[];
   settings: ClinicSettings;
   templates: Template[];
 
@@ -160,9 +153,6 @@ interface ClinicState {
 
   addFollowUp: (patientId: string, dueDate: string, reason: string) => void;
   setFollowUpStatus: (id: string, status: FollowUpStatus) => void;
-  addAppointment: (patientId: string, date: string, time: string, notes?: string) => void;
-  setAppointmentStatus: (id: string, status: AppointmentStatus) => void;
-  deleteAppointment: (id: string) => void;
   updateSettings: (patch: Partial<ClinicSettings>) => void;
 }
 
@@ -171,7 +161,7 @@ export const billTotal = (b: Bill) => b.items.reduce((s, i) => s + i.qty * i.rat
 const empty = {
   role: null, loggedIn: false, loaded: false, userId: null, userName: "",
   patients: [], caseHistories: {}, visits: [], medicines: [], prescriptions: [],
-  bills: [], followUps: [], appointments: [], settings: DEFAULT_SETTINGS, templates: [],
+  bills: [], followUps: [], settings: DEFAULT_SETTINGS, templates: [],
 };
 
 // ─────────────────────────────────────────────────────────────────
@@ -191,14 +181,9 @@ export const useClinic = create<ClinicState>()(
       loadAll: async () => {
         const token = sessionStorage.getItem("hc_token");
         if (!token) { set({ ...empty, loaded: true }); return; }
-
-        if (typeof document !== "undefined" && !document.cookie.includes("hc_token=")) {
-          document.cookie = `hc_token=${token}; path=/; max-age=2592000; SameSite=Lax`;
-        }
-
         try {
           const { loadClinicData } = await sf();
-          const d = await loadClinicData();
+          const d = (await loadClinicData()) as any;
           set({
             loggedIn: true,
             loaded: true,
@@ -206,24 +191,17 @@ export const useClinic = create<ClinicState>()(
             role: d.me.role as Role,
             userName: d.me.fullName,
             patients:      d.pats.map(toPatient),
-            caseHistories: Object.fromEntries(d.chs.map((c) => [c.patientId, c.data as unknown as CaseHistory])),
+            caseHistories: Object.fromEntries(d.chs.map((c: any) => [c.patientId, c.data as unknown as CaseHistory])),
             visits:        d.vis.map(toVisit),
             medicines:     d.meds.map(toMedicine),
             prescriptions: d.pres.map(toPrescription),
             bills:         d.bls.map(toBill),
             followUps:     d.fus.map(toFollowUp),
-            appointments:  (d.appts ?? []).map(toAppointment),
-            templates:     d.tpls.map((t) => ({ id: t.id, name: t.name, items: t.items as Template["items"] })),
+            templates:     d.tpls.map((t: any) => ({ id: t.id, name: t.name, items: t.items as Template["items"] })),
             settings:      d.settings ? toSettings(d.settings) : DEFAULT_SETTINGS,
           });
-        } catch (err: unknown) {
-          console.error("Failed to load clinic data:", err);
-          const msg = err instanceof Error ? err.message : String(err);
-          if (msg.includes("Unauthorized") || msg.includes("User not found")) {
-            useClinic.getState().clear();
-          } else {
-            set({ loaded: true });
-          }
+        } catch {
+          set({ ...empty, loaded: true });
         }
       },
 
@@ -264,7 +242,7 @@ export const useClinic = create<ClinicState>()(
 
       saveCaseHistory: (patientId, ch) => {
         set((s) => ({ caseHistories: { ...s.caseHistories, [patientId]: ch } }));
-        save(sf().then((m) => m.upsertCaseHistory({ data: { patientId, data: ch as Record<string, unknown> } })));
+        save(sf().then((m) => m.upsertCaseHistory({ data: { patientId, data: ch as unknown as Record<string, unknown> } })));
       },
 
       addVisit: (v) => {
@@ -407,25 +385,9 @@ export const useClinic = create<ClinicState>()(
         save(sf().then((m) => m.setFollowUpStatusFn({ data: { id, status } })));
       },
 
-      addAppointment: (patientId, date, time, notes = "") => {
-        const appt: Appointment = { id: uid(), patientId, doctorId: null, date, time, status: "Scheduled", notes };
-        set((s) => ({ appointments: [...s.appointments, appt] }));
-        save(sf().then((m) => m.insertAppointment({ data: appt })));
-      },
-
-      setAppointmentStatus: (id, status) => {
-        set((s) => ({ appointments: s.appointments.map((a) => (a.id === id ? { ...a, status } : a)) }));
-        save(sf().then((m) => m.updateAppointmentStatusFn({ data: { id, status } })));
-      },
-
-      deleteAppointment: (id) => {
-        set((s) => ({ appointments: s.appointments.filter((a) => a.id !== id) }));
-        save(sf().then((m) => m.deleteAppointmentFn({ data: { id } })));
-      },
-
       updateSettings: (patch) => {
         set((s) => ({ settings: { ...s.settings, ...patch } }));
-        save(sf().then((m) => m.updateSettingsFn({ data: patch as Parameters<typeof m.updateSettingsFn>[0]["data"] })));
+        save(sf().then((m) => m.updateSettingsFn({ data: patch as any })));
       },
     }),
     { name: "homeocare-prefs", partialize: (s) => ({ dark: s.dark }) },

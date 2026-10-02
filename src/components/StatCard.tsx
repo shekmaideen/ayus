@@ -73,18 +73,31 @@ export function StatCard({
     </>
   );
 
-  const MotionComponent = motion(to ? Link : "div");
+  if (to) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: index * 0.05, duration: 0.35 }}
+      >
+        <Link
+          to={to}
+          className={cn("card-soft card-lift p-5 block hover:bg-secondary/20")}
+        >
+          {Content}
+        </Link>
+      </motion.div>
+    );
+  }
 
   return (
-    <MotionComponent
-      // @ts-expect-error framer-motion doesn't perfectly type tanstack Link
-      to={to}
+    <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.05, duration: 0.35 }}
-      className={cn("card-soft card-lift p-5 block", to && "hover:bg-secondary/20")}
+      className={cn("card-soft card-lift p-5 block")}
     >
       {Content}
-    </MotionComponent>
+    </motion.div>
   );
 }
