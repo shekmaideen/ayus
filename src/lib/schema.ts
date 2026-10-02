@@ -134,3 +134,16 @@ export const templates = mysqlTable("templates", {
   items:     json("items").$type<unknown[]>().notNull(),
   createdAt: datetime("created_at", { mode: "string" }).notNull(),
 });
+
+// ─── Appointments ────────────────────────────────────────────────
+export const appointments = mysqlTable("appointments", {
+  id:        char("id", { length: 36 }).primaryKey(),
+  patientId: char("patient_id", { length: 36 }).notNull(),
+  doctorId:  char("doctor_id", { length: 36 }),
+  date:      date("date", { mode: "string" }).notNull(),
+  time:      varchar("time", { length: 20 }).notNull().default("10:00 AM"),
+  status:    varchar("status", { length: 20 }).notNull().default("Scheduled"),
+  notes:     varchar("notes", { length: 500 }).notNull().default(""),
+  createdAt: datetime("created_at", { mode: "string" }).notNull(),
+});
+

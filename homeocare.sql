@@ -129,13 +129,26 @@ CREATE TABLE IF NOT EXISTS follow_ups (
   FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
 );
 
--- ─── Prescription Templates ───────────────────────────────────────
-CREATE TABLE IF NOT EXISTS templates (
+-- ─── Appointments ──────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS appointments (
   id         CHAR(36)     PRIMARY KEY DEFAULT (UUID()),
-  name       VARCHAR(200) NOT NULL,
-  items      JSON         NOT NULL DEFAULT (JSON_ARRAY()),
-  created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+  patient_id CHAR(36)     NOT NULL,
+  doctor_id  CHAR(36),
+  date       DATE         NOT NULL,
+  time       VARCHAR(20)  NOT NULL DEFAULT '10:00 AM',
+  status     VARCHAR(20)  NOT NULL DEFAULT 'Scheduled',
+  notes      VARCHAR(500) NOT NULL DEFAULT '',
+  created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE,
+  FOREIGN KEY (doctor_id)  REFERENCES users(id)    ON DELETE SET NULL
 );
+
+-- ─── Indexes for Performance ──────────────────────────────────────
+CREATE INDEX idx_patients_phone ON patients(phone);
+CREATE INDEX idx_patients_name  ON patients(name);
+CREATE INDEX idx_visits_date    ON visits(date);
+CREATE INDEX idx_appts_date     ON appointments(date);
 
 -- ─── Done ────────────────────────────────────────────────────────
 SELECT 'HomeoCare schema created successfully.' AS status;
+

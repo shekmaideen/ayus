@@ -19,6 +19,7 @@ import {
   templates,
   clinicSettings,
   users,
+  appointments,
 } from "@/lib/schema";
 import { requireAuth, assertDoctor } from "@/lib/auth-middleware";
 
@@ -34,7 +35,7 @@ export const loadClinicData = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async ({ context }) => {
     const [
-      meArray, pats, chs, vis, meds, pres, bls, fus, tpls, settings,
+      meArray, pats, chs, vis, meds, pres, bls, fus, tpls, settings, appts,
     ] = await Promise.all([
       db.select().from(users).where(eq(users.id, context.userId)).limit(1),
       db.select().from(patients).orderBy(desc(patients.createdAt)),
@@ -46,12 +47,48 @@ export const loadClinicData = createServerFn({ method: "GET" })
       db.select().from(followUps).orderBy(asc(followUps.dueDate)),
       db.select().from(templates).orderBy(asc(templates.name)),
       db.select().from(clinicSettings).where(eq(clinicSettings.id, 1)).limit(1),
+      db.select().from(appointments).orderBy(asc(appointments.date)),
     ]);
     const me = meArray[0];
     if (!me) throw new Error("User not found");
     
-    return { me: { id: me.id, role: me.role, fullName: me.fullName }, pats, chs, vis, meds, pres, bls, fus, tpls, settings: settings[0] ?? null };
+    return { me: { id: me.id, role: me.role, fullName: me.fullName }, pats, chs, vis, meds, pres, bls, fus, tpls, settings: settings[0] ?? null, appts };
   });
+
+// ─────────────────────────────────────────────────────────────────
+// APPOINTMENTS
+// ─────────────────────────────────────────────────────────────────
+export const insertAppointment = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .inputValidator((d) => z.object({
+    id: z.string(), patientId: z.string(), doctorId: z.string().nullable().optional(),
+    date: z.string(), time: z.string(), status: z.string(), notes: z.string(),
+  }).parse(d))
+  .handler(async ({ data }) => {
+    await db.insert(appointments).values({
+      ...data,
+      doctorId: data.doctorId ?? undefined,
+      createdAt: nowStr(),
+    });
+    return { ok: true };
+  });
+
+export const updateAppointmentStatusFn = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .inputValidator((d) => z.object({ id: z.string(), status: z.string() }).parse(d))
+  .handler(async ({ data }) => {
+    await db.update(appointments).set({ status: data.status }).where(eq(appointments.id, data.id));
+    return { ok: true };
+  });
+
+export const deleteAppointmentFn = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .inputValidator((d) => z.object({ id: z.string() }).parse(d))
+  .handler(async ({ data }) => {
+    await db.delete(appointments).where(eq(appointments.id, data.id));
+    return { ok: true };
+  });
+
 
 // ─────────────────────────────────────────────────────────────────
 // PATIENTS

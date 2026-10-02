@@ -127,3 +127,16 @@ export interface Template {
   name: string;
   items: Omit<PrescriptionItem, "id">[];
 }
+
+export type AppointmentStatus = "Scheduled" | "Confirmed" | "Completed" | "Cancelled" | "No-show";
+
+export interface Appointment {
+  id: string;
+  patientId: string;
+  doctorId: string | null;
+  date: string;
+  time: string;
+  status: AppointmentStatus;
+  notes: string;
+}
+
