@@ -1,7 +1,6 @@
 /**
  * src/lib/staff.functions.ts
- * Server functions for auth and staff management.
- * Replaces Supabase-based implementation with MySQL + JWT + bcrypt.
+ * Server functions for auth and staff management (MySQL + JWT + bcrypt).
  */
 import { createServerFn } from "@tanstack/react-start";
 import { eq, count } from "drizzle-orm";

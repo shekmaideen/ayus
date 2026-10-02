@@ -1,7 +1,6 @@
 /**
  * src/lib/auth-middleware.ts
- * TanStack Start middleware that verifies our custom JWT.
- * Drop-in replacement for the Supabase requireSupabaseAuth middleware.
+ * TanStack Start middleware that verifies JWT authentication.
  *
  * Usage in server functions:
  *   .middleware([requireAuth])

@@ -1,6 +1,6 @@
 /**
  * src/lib/auth.ts
- * JWT + bcrypt helpers that replace Supabase Auth.
+ * JWT + bcrypt authentication helpers.
  * SERVER-SIDE ONLY — never import this in client code.
  */
 import jwt from "jsonwebtoken";

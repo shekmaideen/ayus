@@ -1,12 +1,11 @@
 /**
  * src/store/clinic.ts
- * Zustand global store — replaces all supabase.from() calls with
- * TanStack server function calls against local MySQL.
+ * Zustand global store for clinic state management.
  *
  * Architecture:
  *  - loadAll()    → calls loadClinicData server fn (one round-trip)
  *  - mutations    → optimistic update → server fn (rollback on failure)
- *  - Auth state   → token stored in sessionStorage (not Supabase)
+ *  - Auth state   → token stored in sessionStorage
  */
 import { create } from "zustand";
 import { persist } from "zustand/middleware";

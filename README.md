@@ -1,25 +1,47 @@
-# Your Digital Friend
+# Alhuda Homeo Hospital - Management System
 
-https://demoayus.lovable.app/
-this is the liknk of the website do the remaining build
+A comprehensive Clinic & Hospital Management System built with React 19, TanStack Start / Router, TypeScript, Tailwind CSS, and local MySQL.
 
-This project was built with [Lovable](https://lovable.dev).
+## Features
 
-## Build with Lovable
+- **Dashboard**: Real-time stats on revenue, new patients, and patient visit trends.
+- **Patient Management**: Complete record keeping, medical history, and contact details.
+- **Prescriptions & Backdating**: Create detailed prescriptions with customizable medicine list and visit backdating options.
+- **Billing & Invoicing**: Auto-generate invoices from prescriptions or create manual bills with instant printable views.
+- **Inventory Control**: Track stock levels, pricing, and medicine dosages.
+- **Dynamic Hospital Branding**: Customizable clinic name, tagline, address, phone number, and logo.
+- **Local MySQL Backend**: High-performance local database storing all clinic data securely.
 
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/8a4ec122-5571-4c27-970d-fcb8548197da).
+## Getting Started
 
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+### Prerequisites
 
-## Development
+- Node.js (v18+)
+- MySQL Server (running locally on port 3306)
 
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+### Setup & Installation
 
-```sh
-git clone <this-repository-url>
-cd <repository-name>
-npm i
-npm run dev
-```
+1. **Install dependencies**:
+   ```sh
+   npm install
+   ```
+
+2. **Configure Database**:
+   Import `homeocare.sql` into your local MySQL database:
+   ```sh
+   mysql -u root -p < homeocare.sql
+   ```
+
+3. **Environment Configuration**:
+   Create a `.env` file in the root directory:
+   ```env
+   DATABASE_URL="mysql://root:yourpassword@127.0.0.1:3306/homeocare"
+   JWT_SECRET="your-secure-jwt-secret-key"
+   ```
+
+4. **Run Development Server**:
+   ```sh
+   npm run dev
+   ```
+
+5. Access the application at `http://localhost:3000`.

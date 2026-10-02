@@ -10,7 +10,7 @@ CREATE DATABASE IF NOT EXISTS homeocare
 
 USE homeocare;
 
--- ─── Users (replaces Supabase auth.users + user_roles + profiles) ──
+-- ─── Users ─────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS users (
   id         CHAR(36)     PRIMARY KEY DEFAULT (UUID()),
   email      VARCHAR(255) NOT NULL UNIQUE,
