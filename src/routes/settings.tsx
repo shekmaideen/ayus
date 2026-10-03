@@ -36,10 +36,10 @@ import { listAuditLogs } from "@/lib/clinic.functions";
 export const Route = createFileRoute("/settings")({
   head: () => ({
     meta: [
-      { title: "Settings — Alhuda Homeo Hospital" },
-      { name: "description", content: "Clinic fees, stock threshold, staff accounts and clinic profile." },
-      { property: "og:title", content: "Settings — Alhuda Homeo Hospital" },
-      { property: "og:description", content: "Clinic fees, stock threshold, staff accounts and clinic profile." },
+      { title: "Settings — Dr. Ayus Homeopathy Hospital" },
+      { name: "description", content: "Clinic fees, stock threshold, staff accounts and clinic profile for Dr. Ayus Homeopathy Hospital." },
+      { property: "og:title", content: "Settings — Dr. Ayus Homeopathy Hospital" },
+      { property: "og:description", content: "Clinic fees, stock threshold, staff accounts and clinic profile for Dr. Ayus Homeopathy Hospital." },
     ],
   }),
   component: () => (
@@ -228,7 +228,7 @@ function BackupRestorePanel({ onRestored }: { onRestored: () => void }) {
       const a = document.createElement("a");
       const date = new Date().toISOString().slice(0, 10);
       a.href = url;
-      a.download = `alhuda-backup-${date}.json`;
+      a.download = `ayus-backup-${date}.json`;
       a.click();
       URL.revokeObjectURL(url);
       toast.success("Backup downloaded successfully!");

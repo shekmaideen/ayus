@@ -79,9 +79,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Alhuda Homeo Hospital" },
-      { name: "description", content: "Clinic management system for Alhuda Homeo Hospital." },
-      { name: "author", content: "Alhuda Homeo Hospital" },
+      { title: "Dr. Ayus Homeopathy Hospital" },
+      { name: "description", content: "Hospital & Clinic Management System for Dr. Ayus Homeopathy Hospital." },
+      { name: "author", content: "Dr. Ayus Homeopathy Hospital" },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
     ],

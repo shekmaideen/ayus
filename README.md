@@ -1,47 +1,97 @@
-# Alhuda Homeo Hospital - Management System
+# Dr. Ayus Homeopathy Hospital - Management System
 
-A comprehensive Clinic & Hospital Management System built with React 19, TanStack Start / Router, TypeScript, Tailwind CSS, and local MySQL.
+A modern, high-performance Clinic & Hospital Management System designed for **Dr. Ayus Homeopathy Hospital**, built with React 19, TanStack Start & Router, TypeScript, Tailwind CSS, and local MySQL with Drizzle ORM.
 
-## Features
+---
 
-- **Dashboard**: Real-time stats on revenue, new patients, and patient visit trends.
-- **Patient Management**: Complete record keeping, medical history, and contact details.
-- **Prescriptions & Backdating**: Create detailed prescriptions with customizable medicine list and visit backdating options.
-- **Billing & Invoicing**: Auto-generate invoices from prescriptions or create manual bills with instant printable views.
-- **Inventory Control**: Track stock levels, pricing, and medicine dosages.
-- **Dynamic Hospital Branding**: Customizable clinic name, tagline, address, phone number, and logo.
-- **Local MySQL Backend**: High-performance local database storing all clinic data securely.
+## 🌟 Key Features
 
-## Getting Started
+- **Dashboard**: Real-time overview of clinic statistics, revenue trends, today's appointments, and recent patient visits.
+- **Patient Management**: Full demographic records, contact details, medical case history, and past visit logs.
+- **Prescription Builder**: Create detailed prescriptions with multi-potency support, customizable dosages, instructions, and next visit scheduling.
+- **Dedicated WhatsApp Messaging**: Independent manual WhatsApp buttons on Patient Registration, Prescription Builder, and Billing to send pre-filled updates via WhatsApp Web without paid API dependencies.
+- **Advanced Medicine Inventory**:
+  - Full tracking for Medicine Name, Brand, Form/Type, Potency, Stock Quantity, and live Selling Price.
+  - Form-specific conditional options: `Bottle` (with manufacturer brand and dilution potencies `30CH`, `200CH`, `1M`, `Q`, `4X`, `3X`, `6X`, and manual custom typing), `Tablet` (`3X`, `4X`, `6X`, and manual custom typing), and clean display for other forms.
+  - Automatically generated Indian Standard Time (IST / Asia/Kolkata) Stock Entry Date, Day, and Time.
+  - Stock Adjustment tool (`+` Add, `-` Remove, `=` Set Exact) with audit logging.
+  - Decoupled stock: Prescriptions and bills do not automatically alter stock levels, leaving inventory fully in the staff's control.
+- **Billing & Invoicing**: Automated invoice calculation from live medicine prices and consultation fees, printable receipts, and payment status tracking.
+- **Follow-up Management**: Filter upcoming follow-ups for Today, This Week, and Overdue with one-click status updates.
+- **Security & Staff RBAC**:
+  - Role-based permissions (Doctor vs Receptionist).
+  - Bcrypt password hashing and secure JWT session management.
+  - Login rate limiting, failed attempt lockout protection, and comprehensive audit logging.
+- **Automated Local Backups**: Daily non-blocking database export with one-click manual JSON backup downloads.
+
+---
+
+## 🚀 Getting Started
 
 ### Prerequisites
 
-- Node.js (v18+)
-- MySQL Server (running locally on port 3306)
+- **Node.js** (v18 or higher recommended)
+- **MySQL Server 8.0+** running on port 3306
+
+---
 
 ### Setup & Installation
 
-1. **Install dependencies**:
-   ```sh
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/shekmaideen/ayus.git
+   cd ayus
+   ```
+
+2. **Install dependencies**:
+   ```bash
    npm install
    ```
 
-2. **Configure Database**:
-   Import `homeocare.sql` into your local MySQL database:
-   ```sh
-   mysql -u root -p < homeocare.sql
+3. **Configure Database**:
+   Import `ayus.sql` into your local MySQL database:
+   ```bash
+   mysql -u root -p < ayus.sql
    ```
 
-3. **Environment Configuration**:
-   Create a `.env` file in the root directory:
+4. **Environment Configuration**:
+   Copy the example environment configuration file to `.env`:
+   ```bash
+   cp .env.example .env
+   ```
+   *(On Windows Command Prompt: `copy .env.example .env`)*
+
+   Update your `.env` with your local MySQL credentials:
    ```env
-   DATABASE_URL="mysql://root:yourpassword@127.0.0.1:3306/homeocare"
-   JWT_SECRET="your-secure-jwt-secret-key"
+   MYSQL_HOST=localhost
+   MYSQL_PORT=3306
+   MYSQL_USER=root
+   MYSQL_PASSWORD=your_mysql_password
+   MYSQL_DATABASE=ayus
+
+   JWT_SECRET=your_secure_jwt_secret_key
+   JWT_EXPIRES_IN=30d
    ```
 
-4. **Run Development Server**:
-   ```sh
+5. **Start Development Server**:
+   ```bash
    npm run dev
    ```
 
-5. Access the application at `http://localhost:3000`.
+6. Open [http://localhost:3000](http://localhost:3000) (or the port indicated in the terminal) in your browser.
+
+---
+
+## 🔒 Security Best Practice
+
+The `.env` file contains sensitive environment secrets (database credentials, JWT secret keys) and is excluded from version control via `.gitignore`. Always maintain local credentials in your `.env` file and use `.env.example` as a template.
+
+---
+
+## 🛠️ Production Build
+
+To test or generate the production bundle:
+
+```bash
+npm run build
+```

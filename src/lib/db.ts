@@ -17,7 +17,7 @@ function getPool(): mysql.Pool {
       port: Number(process.env["MYSQL_PORT"] ?? 3306),
       user: process.env["MYSQL_USER"] ?? "root",
       password: process.env["MYSQL_PASSWORD"] ?? "",
-      database: process.env["MYSQL_DATABASE"] ?? "homeocare",
+      database: process.env["MYSQL_DATABASE"] ?? "ayus",
       waitForConnections: true,
       connectionLimit: 10,
       // Return dates as strings (YYYY-MM-DD) so they match what the app expects
