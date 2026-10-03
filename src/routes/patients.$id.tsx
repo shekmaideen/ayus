@@ -1,6 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { motion } from "framer-motion";
-import { AlertTriangle, ArrowLeft, Mail, MapPin, Pencil, Phone, Plus, RotateCcw, X, CalendarClock } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Mail, MapPin, Pencil, Phone, Plus, RotateCcw, X, CalendarClock, Printer } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/AppShell";
@@ -28,6 +28,7 @@ import { formatDate, initials, inr, todayISO } from "@/lib/format";
 import type { Bill, CaseHistory, Prescription } from "@/data/types";
 import { WhatsAppButton } from "@/components/WhatsAppButton";
 import { buildBillingMessage, buildPrescriptionMessage, buildRegistrationMessage, openWhatsAppMessage } from "@/lib/whatsapp";
+import { PrescriptionPrintSheet } from "@/components/PrescriptionPrintSheet";
 
 export const Route = createFileRoute("/patients/$id")({
   head: () => ({
@@ -111,6 +112,7 @@ function PatientProfile() {
   const {
     patients,
     visits,
+    medicines,
     prescriptions,
     bills,
     followUps,
@@ -134,6 +136,7 @@ function PatientProfile() {
   const [note, setNote] = useState({ complaint: "", notes: "" });
   const [ch, setCh] = useState<CaseHistory>(caseHistories[id] ?? EMPTY_CH);
   const [draft, setDraft] = useState(patient);
+  const [printingRx, setPrintingRx] = useState<Prescription | null>(null);
 
   const handleSendRegistrationWhatsApp = () => {
     if (!patient) return;
@@ -645,6 +648,14 @@ function PatientProfile() {
                       size="sm"
                       onClick={() => handleSendPrescriptionWhatsApp(rx)}
                     />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 rounded-lg px-2.5 text-xs shadow-sm"
+                      onClick={() => setPrintingRx(rx)}
+                    >
+                      <Printer className="mr-1.5 h-3.5 w-3.5 text-emerald-600" /> Print
+                    </Button>
                   </div>
                 </div>
                 <div className="mt-3 overflow-x-auto">
@@ -798,6 +809,42 @@ function PatientProfile() {
           </div>
         </SheetContent>
       </Sheet>
+
+      <Dialog open={!!printingRx} onOpenChange={(open) => !open && setPrintingRx(null)}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
+          <DialogHeader className="no-print flex flex-row items-center justify-between pb-3 border-b">
+            <div>
+              <DialogTitle className="text-base font-bold text-foreground">
+                Prescription — Dr. Ayus Homeopathy Hospital
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">
+                Official prescription document ready for high-resolution printing or PDF export.
+              </DialogDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                className="rounded-xl shadow-sm"
+                onClick={() => window.print()}
+              >
+                <Printer className="mr-1.5 h-4 w-4 text-emerald-600" /> Print
+              </Button>
+            </div>
+          </DialogHeader>
+
+          {printingRx && patient && (
+            <div className="py-2">
+              <PrescriptionPrintSheet
+                prescription={printingRx}
+                patient={patient}
+                visit={visits.find((v) => v.id === printingRx.visitId)}
+                medicines={medicines}
+                settings={settings}
+              />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

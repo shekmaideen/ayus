@@ -129,6 +129,8 @@ export interface PrescriptionItem {
   id: string;
   medicineId: string;
   medicineName: string;
+  brand?: string;
+  formType?: string;
   potency: string;
   dosage: string;
   frequency: string;

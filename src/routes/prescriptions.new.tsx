@@ -10,12 +10,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { LeafMark } from "@/components/Logo";
 import { can, useClinic } from "@/store/clinic";
-import { formatDate, inr, todayISO } from "@/lib/format";
+import { inr, todayISO, formatDate } from "@/lib/format";
 import { isPotencyApplicable, isBrandApplicable, type Bill, type Prescription, type PrescriptionItem } from "@/data/types";
 import { WhatsAppButton } from "@/components/WhatsAppButton";
 import { buildPrescriptionMessage, openWhatsAppMessage } from "@/lib/whatsapp";
+import {
+  PrescriptionPrintSheet,
+  parseClinicalNotes,
+  serializeClinicalNotes,
+} from "@/components/PrescriptionPrintSheet";
 
 export const Route = createFileRoute("/prescriptions/new")({
   validateSearch: (search: Record<string, unknown>): { patientId?: string; refill?: string } => {
@@ -26,10 +30,10 @@ export const Route = createFileRoute("/prescriptions/new")({
   },
   head: () => ({
     meta: [
-      { title: "Prescription builder — HomeoCare Clinic Manager" },
-      { name: "description", content: "Build a homeopathic prescription, set a follow-up and print an A4 sheet." },
-      { property: "og:title", content: "Prescription builder — HomeoCare Clinic Manager" },
-      { property: "og:description", content: "Build a homeopathic prescription, set a follow-up and print an A4 sheet." },
+      { title: "Prescription builder — Dr. Ayus Homeopathy Hospital" },
+      { name: "description", content: "Build a homeopathic prescription, set a follow-up and print an A4 sheet for Dr. Ayus Homeopathy Hospital." },
+      { property: "og:title", content: "Prescription builder — Dr. Ayus Homeopathy Hospital" },
+      { property: "og:description", content: "Build a homeopathic prescription, set a follow-up and print an A4 sheet for Dr. Ayus Homeopathy Hospital." },
     ],
   }),
   component: () => (
@@ -45,26 +49,30 @@ const blankRow = (): PrescriptionItem => ({
   id: uid(),
   medicineId: "",
   medicineName: "",
-  potency: "30C",
-  dosage: "4 pills",
-  frequency: "Twice daily",
-  duration: "7 days",
+  brand: "",
+  formType: "Bottle",
+  potency: "30CH",
+  dosage: "5 drops",
+  frequency: "3 times/day",
+  duration: "5 days",
   quantity: 1,
-  instructions: "After food",
+  instructions: "Before food",
 });
 
 function Builder() {
   const { patientId, refill } = Route.useSearch();
   const navigate = useNavigate();
-  const { patients, medicines, prescriptions, templates, settings, role, savePrescription, saveTemplate } = useClinic();
+  const { patients, medicines, prescriptions, visits, templates, settings, role, savePrescription, saveTemplate } = useClinic();
 
   const refillSource = refill ? prescriptions.find((p) => p.id === refill) : undefined;
+  const initialNotes = parseClinicalNotes(refillSource?.notes);
   const [selected, setSelected] = useState(patientId ?? "");
   const [items, setItems] = useState<PrescriptionItem[]>(
     refillSource ? refillSource.items.map((i) => ({ ...i, id: uid() })) : [blankRow()],
   );
   const [followUpDate, setFollowUpDate] = useState(refillSource?.followUpDate ?? "");
-  const [notes, setNotes] = useState("");
+  const [diagnosis, setDiagnosis] = useState(initialNotes.diagnosis);
+  const [specialInstructions, setSpecialInstructions] = useState(initialNotes.specialInstructions);
   const [templateName, setTemplateName] = useState("");
   const [visitDate, setVisitDate] = useState(todayISO());
   const [saved, setSaved] = useState<{ prescription: Prescription; bill: Bill } | null>(null);
@@ -94,11 +102,12 @@ function Builder() {
     if (!patient) { toast.error("Select a patient first"); return; }
     const valid = items.filter((i) => i.medicineId);
     if (valid.length === 0) { toast.error("Add at least one medicine"); return; }
+    const combinedNotes = serializeClinicalNotes(diagnosis, specialInstructions);
     const result = savePrescription({
       patientId: patient.id,
       items: valid,
       followUpDate: followUpDate || null,
-      notes,
+      notes: combinedNotes,
       isRefill: !!refillSource,
       date: visitDate,
     });
@@ -136,20 +145,23 @@ function Builder() {
     openWhatsAppMessage(patient.phone, message);
   };
 
+  // ─────────────────────────────────────────────────────────────────
+  // SAVED PRESCRIPTION VIEW (Clean, Standalone A4 Print Sheet)
+  // ─────────────────────────────────────────────────────────────────
   if (saved && patient) {
     return (
       <>
-        <div className="no-print">
+        <div className="no-print mb-6">
           <PageTitle
             title="Prescription saved"
-            subtitle={`Bill ${saved.bill.invoiceNo} generated automatically`}
+            subtitle={`Prescription ready for printing · Bill ${saved.bill.invoiceNo} generated`}
             action={
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" className="rounded-xl" onClick={() => window.print()}>
-                  <Printer className="mr-2 h-4 w-4" /> Print
+              <div className="flex flex-wrap items-center gap-2">
+                <Button variant="outline" className="rounded-xl shadow-sm" onClick={() => window.print()}>
+                  <Printer className="mr-2 h-4 w-4 text-emerald-600" /> Print
                 </Button>
-                <Button variant="outline" className="rounded-xl" onClick={() => window.print()}>
-                  <FileDown className="mr-2 h-4 w-4" /> Download PDF
+                <Button variant="outline" className="rounded-xl shadow-sm" onClick={() => window.print()}>
+                  <FileDown className="mr-2 h-4 w-4 text-primary" /> Save as PDF
                 </Button>
                 <WhatsAppButton onClick={handleSendWhatsApp} />
                 <Button asChild className="rounded-xl">
@@ -160,95 +172,57 @@ function Builder() {
           />
         </div>
 
-        <div className="print-sheet mx-auto max-w-[820px] card-soft p-10">
-          <div className="flex items-start justify-between border-b pb-5">
-            <div className="flex items-center gap-3">
-              {settings.logoDataUrl ? (
-                <img src={settings.logoDataUrl} alt="Clinic logo" className="h-12 w-12 rounded-lg object-cover" />
-              ) : (
-                <LeafMark className="h-12 w-12 text-primary" />
-              )}
-              <div>
-                <p className="font-display text-2xl">{settings.clinicName}</p>
-                <p className="text-xs text-muted-foreground">{settings.address}</p>
-                <p className="text-xs text-muted-foreground">{settings.phone}</p>
-              </div>
-            </div>
-            <div className="text-right text-xs text-muted-foreground">
-              <p className="text-sm font-semibold text-foreground">{settings.doctorName}</p>
-              <p>Date: {formatDate(saved.prescription.date)}</p>
-            </div>
-          </div>
+        {/* Clean, Authentic Hospital Prescription Document */}
+        <PrescriptionPrintSheet
+          prescription={saved.prescription}
+          patient={patient}
+          visit={visits.find((v) => v.id === saved.prescription.visitId)}
+          medicines={medicines}
+          settings={settings}
+        />
 
-          <div className="grid gap-2 border-b py-4 text-sm sm:grid-cols-2">
-            <p><span className="text-muted-foreground">Patient:</span> <strong>{patient.name}</strong></p>
-            <p><span className="text-muted-foreground">Reg No:</span> {patient.regNo}</p>
-            <p><span className="text-muted-foreground">Age / Gender:</span> {patient.age} / {patient.gender}</p>
-            <p><span className="text-muted-foreground">Phone:</span> {patient.phone}</p>
-          </div>
-
-          <p className="mt-5 font-display text-3xl text-primary">℞</p>
-          <table className="mt-2 w-full text-sm">
-            <thead className="border-b text-left text-xs uppercase tracking-wider text-muted-foreground">
-              <tr><th className="py-2">Medicine</th><th>Potency</th><th>Dosage</th><th>Frequency</th><th>Duration</th><th>Qty</th></tr>
-            </thead>
-            <tbody className="divide-y">
-              {saved.prescription.items.map((i) => (
-                <tr key={i.id}>
-                  <td className="py-2.5">
-                    <span className="font-medium">{i.medicineName}</span>
-                    {i.instructions && <span className="block text-xs text-muted-foreground">{i.instructions}</span>}
-                  </td>
-                  <td>{i.potency && i.potency.trim() !== "" && i.potency !== "-" ? i.potency : "—"}</td>
-                  <td>{i.dosage}</td>
-                  <td>{i.frequency}</td>
-                  <td>{i.duration}</td>
-                  <td>{i.quantity}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          {saved.prescription.notes && (
-            <p className="mt-5 text-sm"><span className="text-muted-foreground">Notes:</span> {saved.prescription.notes}</p>
-          )}
-          {saved.prescription.followUpDate && (
-            <p className="mt-3 inline-block rounded-lg bg-primary-soft px-3 py-1.5 text-sm text-primary-soft-foreground">
-              Next follow-up: {formatDate(saved.prescription.followUpDate)}
-            </p>
-          )}
-
-          <div className="mt-16 flex justify-end">
-            <div className="text-center">
-              <p className="font-display text-xl italic text-primary">{settings.doctorName.split(",")[0]}</p>
-              <p className="mt-1 border-t pt-1 text-xs text-muted-foreground">Signature</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="no-print mt-6 flex justify-center">
-          <Button variant="ghost" onClick={() => { setSaved(null); setItems([blankRow()]); setNotes(""); }}>
+        <div className="no-print mt-6 flex flex-wrap justify-center gap-3">
+          <Button
+            variant="outline"
+            className="rounded-xl"
+            onClick={() => {
+              setSaved(null);
+              setItems([blankRow()]);
+              setDiagnosis("");
+              setSpecialInstructions("");
+            }}
+          >
             Write another prescription
           </Button>
+          <Button variant="outline" className="rounded-xl" onClick={() => window.print()}>
+            <Printer className="mr-2 h-4 w-4" /> Print
+          </Button>
+          <WhatsAppButton onClick={handleSendWhatsApp} />
         </div>
       </>
     );
   }
 
+  // ─────────────────────────────────────────────────────────────────
+  // PRESCRIPTION BUILDER FORM
+  // ─────────────────────────────────────────────────────────────────
   return (
     <>
       <PageTitle
         title={refillSource ? "Refill prescription" : "Prescription builder"}
-        subtitle="Select medicines from inventory"
+        subtitle="Select medicines from inventory and build A4 prescription"
         action={
-          <Button className="rounded-xl" onClick={handleSave}>
-            <Save className="mr-2 h-4 w-4" /> Save prescription
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button className="rounded-xl" onClick={handleSave}>
+              <Save className="mr-2 h-4 w-4" /> Save prescription
+            </Button>
+          </div>
         }
       />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
+          {/* Patient and Visit Details */}
           <div className="card-soft p-5">
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-2">
@@ -284,6 +258,7 @@ function Builder() {
             )}
           </div>
 
+          {/* Medicines List */}
           <div className="card-soft p-5">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Medicines</h3>
@@ -323,84 +298,113 @@ function Builder() {
                     transition={{ duration: 0.2 }}
                     className="overflow-hidden"
                   >
-                    <div className="mb-3 grid gap-3 rounded-xl border p-4 sm:grid-cols-2 lg:grid-cols-4">
-                      <div className="space-y-1.5 sm:col-span-2">
-                        <Label className="text-xs">Medicine</Label>
-                        <Select
-                          value={row.medicineId}
-                          onValueChange={(v) => {
-                            const m = medicines.find((x) => x.id === v);
-                            if (m) {
-                              update(row.id, {
-                                medicineId: v,
-                                medicineName: m.name,
-                                potency: m.potency || "",
-                              });
-                            }
-                          }}
-                        >
-                          <SelectTrigger><SelectValue placeholder="Search inventory" /></SelectTrigger>
-                          <SelectContent className="max-h-72">
-                            {medicines.map((m) => (
-                              <SelectItem key={m.id} value={m.id}>
-                                {m.name}
-                                {m.potency && m.potency.trim() !== "" && m.potency !== "-" ? ` · ${m.potency}` : ""}
-                                {` · ${m.formType || "Bottle"}`}
-                                {isBrandApplicable(m.formType) && m.brand ? ` (${m.brand})` : ""} · {m.stock} in stock · ₹{m.price}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">Potency</Label>
-                        {!hasPotency ? (
-                          <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3 font-mono text-xs text-muted-foreground">
-                            N/A
-                          </div>
-                        ) : (
-                          <Input
-                            value={row.potency}
-                            onChange={(e) => update(row.id, { potency: e.target.value })}
-                            placeholder="e.g. 30CH, 200CH, 3X..."
-                            className="h-9 font-mono text-xs"
-                          />
-                        )}
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">Dosage</Label>
-                        <Input value={row.dosage} onChange={(e) => update(row.id, { dosage: e.target.value })} />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">Frequency</Label>
-                        <Input value={row.frequency} onChange={(e) => update(row.id, { frequency: e.target.value })} />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">Duration</Label>
-                        <Input value={row.duration} onChange={(e) => update(row.id, { duration: e.target.value })} />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-xs">Quantity</Label>
-                        <Input
-                          type="number"
-                          min={1}
-                          value={row.quantity}
-                          onChange={(e) => update(row.id, { quantity: Math.max(1, Number(e.target.value)) })}
-                        />
-                      </div>
-                      <div className="flex items-end gap-2">
-                        <div className="flex-1 space-y-1.5">
-                          <Label className="text-xs">Instructions</Label>
-                          <Input value={row.instructions} onChange={(e) => update(row.id, { instructions: e.target.value })} />
+                    <div className="mb-3 space-y-3 rounded-xl border p-4">
+                      {/* Row 1: Medicine Selection & Auto-fill Form / Brand */}
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                        <div className="space-y-1.5 sm:col-span-2">
+                          <Label className="text-xs">Medicine</Label>
+                          <Select
+                            value={row.medicineId}
+                            onValueChange={(v) => {
+                              const m = medicines.find((x) => x.id === v);
+                              if (m) {
+                                update(row.id, {
+                                  medicineId: v,
+                                  medicineName: m.name,
+                                  brand: m.brand || "—",
+                                  formType: m.formType || "Bottle",
+                                  potency: m.potency || "",
+                                });
+                              }
+                            }}
+                          >
+                            <SelectTrigger><SelectValue placeholder="Search inventory" /></SelectTrigger>
+                            <SelectContent className="max-h-72">
+                              {medicines.map((m) => (
+                                <SelectItem key={m.id} value={m.id}>
+                                  {m.name}
+                                  {m.potency && m.potency.trim() !== "" && m.potency !== "-" ? ` · ${m.potency}` : ""}
+                                  {` · ${m.formType || "Bottle"}`}
+                                  {isBrandApplicable(m.formType) && m.brand ? ` (${m.brand})` : ""} · {m.stock} in stock · ₹{m.price}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label="Remove medicine"
-                          onClick={() => setItems((r) => (r.length > 1 ? r.filter((x) => x.id !== row.id) : r))}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Brand</Label>
+                          <Input
+                            value={row.brand ?? ""}
+                            onChange={(e) => update(row.id, { brand: e.target.value })}
+                            placeholder="e.g. SBL, Schwabe..."
+                            className="h-9 text-xs"
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">Form</Label>
+                          <Input
+                            value={row.formType ?? ""}
+                            onChange={(e) => update(row.id, { formType: e.target.value })}
+                            placeholder="e.g. Bottle, Tablet..."
+                            className="h-9 text-xs"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Row 2: Potency, Dosage, Frequency, Duration, Qty, Instructions */}
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
+                        <div className="space-y-1.5 sm:col-span-1">
+                          <Label className="text-xs">Potency</Label>
+                          {!hasPotency ? (
+                            <div className="flex h-9 items-center rounded-md border bg-muted/40 px-3 font-mono text-xs text-muted-foreground">
+                              N/A
+                            </div>
+                          ) : (
+                            <Input
+                              value={row.potency}
+                              onChange={(e) => update(row.id, { potency: e.target.value })}
+                              placeholder="e.g. 30CH, 200CH, 3X..."
+                              className="h-9 font-mono text-xs"
+                            />
+                          )}
+                        </div>
+                        <div className="space-y-1.5 sm:col-span-1">
+                          <Label className="text-xs">Dosage</Label>
+                          <Input value={row.dosage} onChange={(e) => update(row.id, { dosage: e.target.value })} className="h-9 text-xs" />
+                        </div>
+                        <div className="space-y-1.5 sm:col-span-1">
+                          <Label className="text-xs">Frequency</Label>
+                          <Input value={row.frequency} onChange={(e) => update(row.id, { frequency: e.target.value })} className="h-9 text-xs" />
+                        </div>
+                        <div className="space-y-1.5 sm:col-span-1">
+                          <Label className="text-xs">Duration</Label>
+                          <Input value={row.duration} onChange={(e) => update(row.id, { duration: e.target.value })} className="h-9 text-xs" />
+                        </div>
+                        <div className="space-y-1.5 sm:col-span-1">
+                          <Label className="text-xs">Quantity</Label>
+                          <Input
+                            type="number"
+                            min={1}
+                            value={row.quantity}
+                            onChange={(e) => update(row.id, { quantity: Math.max(1, Number(e.target.value)) })}
+                            className="h-9 text-xs"
+                          />
+                        </div>
+                        <div className="flex items-end gap-2 sm:col-span-1">
+                          <div className="flex-1 space-y-1.5">
+                            <Label className="text-xs">Instructions</Label>
+                            <Input value={row.instructions} onChange={(e) => update(row.id, { instructions: e.target.value })} className="h-9 text-xs" />
+                          </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label="Remove medicine"
+                            className="h-9 w-9 shrink-0 text-destructive hover:bg-destructive/10"
+                            onClick={() => setItems((r) => (r.length > 1 ? r.filter((x) => x.id !== row.id) : r))}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
                       </div>
                     </div>
                   </motion.div>
@@ -408,13 +412,33 @@ function Builder() {
               })}
             </AnimatePresence>
 
-            <div className="mt-2 space-y-2">
-              <Label htmlFor="rx-notes">Notes for the patient</Label>
-              <Textarea id="rx-notes" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
+            {/* Clinical Notes & Special Instructions */}
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="rx-diag" className="text-xs font-semibold">Diagnosis / Clinical Notes</Label>
+                <Textarea
+                  id="rx-diag"
+                  rows={2}
+                  value={diagnosis}
+                  onChange={(e) => setDiagnosis(e.target.value)}
+                  placeholder="e.g. Acute bronchitis, Rhus tox indicated..."
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="rx-instructions" className="text-xs font-semibold">Special Instructions</Label>
+                <Textarea
+                  id="rx-instructions"
+                  rows={2}
+                  value={specialInstructions}
+                  onChange={(e) => setSpecialInstructions(e.target.value)}
+                  placeholder="e.g. Avoid sour foods, take with warm water, avoid raw onions..."
+                />
+              </div>
             </div>
           </div>
         </div>
 
+        {/* Sidebar: Billing Preview & Template */}
         <div className="space-y-4">
           <div className="card-soft p-5">
             <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Bill preview</h3>
@@ -424,7 +448,7 @@ function Builder() {
               <div className="flex justify-between border-t pt-2 font-semibold"><dt>Estimated total</dt><dd>{inr(total + settings.consultationFee)}</dd></div>
             </dl>
             <p className="mt-3 text-xs text-muted-foreground">
-              Exact fees are applied when the prescription is saved, based on whether this is a new or follow-up visit.
+              Exact fees are applied when the prescription is saved, based on whether this is a new or follow-up visit. Stock is not automatically deducted.
             </p>
           </div>
 
@@ -462,10 +486,6 @@ function Builder() {
             <Button className="h-11 w-full rounded-xl" onClick={handleSave}>
               Save prescription & generate bill
             </Button>
-            <WhatsAppButton
-              className="h-11 w-full justify-center"
-              onClick={handleSendWhatsApp}
-            />
             <Button variant="ghost" className="w-full" onClick={() => navigate({ to: "/patients" })}>
               Cancel
             </Button>

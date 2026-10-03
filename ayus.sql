@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS clinic_settings (
   low_stock_threshold INT           NOT NULL DEFAULT 10,
   clinic_name         VARCHAR(200)  NOT NULL DEFAULT 'Dr. Ayus Homeopathy Hospital',
   address             VARCHAR(500)  NOT NULL DEFAULT '',
-  phone               VARCHAR(20)   NOT NULL DEFAULT '',
+  phone               VARCHAR(100)  NOT NULL DEFAULT '',
   doctor_name         VARCHAR(100)  NOT NULL DEFAULT '',
   logo_data_url       LONGTEXT,
   CONSTRAINT chk_singleton CHECK (id = 1)

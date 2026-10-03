@@ -214,17 +214,60 @@
     linear-gradient(150deg, var(--color-primary), color-mix(in oklab, var(--color-primary) 55%, black));
 }
 
+@page {
+  size: A4 portrait;
+  margin: 8mm 10mm 10mm 10mm;
+}
+
 @media print {
-  .no-print {
+  html, body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .no-print,
+  aside,
+  header,
+  nav,
+  [data-sonner-toaster],
+  .sonner-toast {
     display: none !important;
   }
+
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
   .print-sheet {
     box-shadow: none !important;
     border: none !important;
     margin: 0 !important;
+    padding: 0 !important;
     width: 100% !important;
+    max-width: 100% !important;
+    background: transparent !important;
   }
-  body {
-    background: white !important;
+
+  .page-break-inside-avoid {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
+
+  table {
+    page-break-inside: auto;
+  }
+
+  tr {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
   }
 }

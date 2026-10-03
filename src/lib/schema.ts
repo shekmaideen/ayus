@@ -38,7 +38,7 @@ export const clinicSettings = mysqlTable("clinic_settings", {
   lowStockThreshold:  int("low_stock_threshold").notNull().default(10),
   clinicName:         varchar("clinic_name", { length: 200 }).notNull().default("HomeoCare Clinic"),
   address:            varchar("address", { length: 500 }).notNull().default(""),
-  phone:              varchar("phone", { length: 20 }).notNull().default(""),
+  phone:              varchar("phone", { length: 100 }).notNull().default(""),
   doctorName:         varchar("doctor_name", { length: 100 }).notNull().default(""),
   logoDataUrl:        text("logo_data_url"),
 });
