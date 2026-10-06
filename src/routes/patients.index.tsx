@@ -33,7 +33,6 @@ function PatientList() {
   const [q, setQ] = useState("");
   const [gender, setGender] = useState("all");
   const [status, setStatus] = useState("all");
-  const [bloodGroup, setBloodGroup] = useState("all");
   const [sort, setSort] = useState<"name" | "recent" | "age">("recent");
   const [page, setPage] = useState(1);
 
@@ -43,13 +42,12 @@ function PatientList() {
       const matches = !t || p.name.toLowerCase().includes(t) || p.phone.includes(t) || p.regNo.toLowerCase().includes(t);
       const g = gender === "all" || p.gender === gender;
       const s = status === "all" || (status === "active" ? p.active : !p.active);
-      const bg = bloodGroup === "all" || p.bloodGroup === bloodGroup;
-      return matches && g && s && bg;
+      return matches && g && s;
     });
     return [...list].sort((a, b) =>
       sort === "name" ? a.name.localeCompare(b.name) : sort === "age" ? b.age - a.age : b.registeredOn.localeCompare(a.registeredOn),
     );
-  }, [patients, q, gender, status, bloodGroup, sort]);
+  }, [patients, q, gender, status, sort]);
 
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE));
   const current = Math.min(page, pages);
@@ -105,15 +103,6 @@ function PatientList() {
               <SelectItem value="all">All statuses</SelectItem>
               <SelectItem value="active">Active</SelectItem>
               <SelectItem value="inactive">Inactive</SelectItem>
-            </SelectContent>
-          </Select>
-          <Select value={bloodGroup} onValueChange={(v) => { setBloodGroup(v); setPage(1); }}>
-            <SelectTrigger className="w-36 rounded-xl"><SelectValue placeholder="Blood group" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All blood groups</SelectItem>
-              {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map((bg) => (
-                <SelectItem key={bg} value={bg}>{bg}</SelectItem>
-              ))}
             </SelectContent>
           </Select>
           <Select value={sort} onValueChange={(v) => setSort(v as typeof sort)}>

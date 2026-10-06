@@ -58,7 +58,7 @@ function RegisterPatient() {
     phone: "",
     email: "",
     address: "",
-    bloodGroup: "O+",
+    bloodGroup: "",
     allergies: [] as string[],
     occupation: "",
   });
@@ -140,7 +140,7 @@ function RegisterPatient() {
         phone: form.phone.trim(),
         email: form.email.trim(),
         address: form.address.trim(),
-        bloodGroup: form.bloodGroup,
+        bloodGroup: "",
         allergies: form.allergies,
         occupation: form.occupation.trim(),
       });
@@ -202,7 +202,7 @@ function RegisterPatient() {
                   phone: "",
                   email: "",
                   address: "",
-                  bloodGroup: "O+",
+                  bloodGroup: "",
                   allergies: [],
                   occupation: "",
                 });
@@ -442,17 +442,6 @@ function RegisterPatient() {
 
             {step === 2 && (
               <>
-                <div className="space-y-2">
-                  <Label>Blood group</Label>
-                  <Select value={form.bloodGroup} onValueChange={(v) => set("bloodGroup", v)}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-"].map((b) => (
-                        <SelectItem key={b} value={b}>{b}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="allergy">Known allergies</Label>
                   <div className="flex gap-2">

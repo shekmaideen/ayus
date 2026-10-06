@@ -645,14 +645,6 @@ function PatientProfile() {
                   <Phone className="h-3 w-3 text-primary" />
                   <strong>{patient.phone || "—"}</strong>
                 </span>
-                {patient.bloodGroup && (
-                  <>
-                    <span>&bull;</span>
-                    <span>
-                      Blood: <strong className="text-foreground">{patient.bloodGroup}</strong>
-                    </span>
-                  </>
-                )}
                 <span>&bull;</span>
                 <span>
                   Registered: <strong>{formatDate(patient.registeredOn)}</strong>
@@ -864,14 +856,10 @@ function PatientProfile() {
                   <Activity className="h-4 w-4 text-primary" /> Clinical Snapshot &amp; Demographics
                 </h3>
 
-                <dl className="grid gap-3 text-xs sm:grid-cols-3">
+                <dl className="grid gap-3 text-xs sm:grid-cols-2">
                   <div>
                     <dt className="text-muted-foreground">Occupation</dt>
                     <dd className="font-semibold text-foreground text-sm">{patient.occupation || "—"}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">Blood Group</dt>
-                    <dd className="font-semibold text-foreground text-sm">{patient.bloodGroup || "—"}</dd>
                   </div>
                   <div>
                     <dt className="text-muted-foreground">Registration Date</dt>
@@ -2517,15 +2505,9 @@ function PatientProfile() {
                   </Select>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-2">
-                  <Label>Phone</Label>
-                  <Input value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} />
-                </div>
-                <div className="space-y-2">
-                  <Label>Blood Group</Label>
-                  <Input value={draft.bloodGroup} onChange={(e) => setDraft({ ...draft, bloodGroup: e.target.value })} />
-                </div>
+              <div className="space-y-2">
+                <Label>Phone</Label>
+                <Input value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} />
               </div>
               <div className="space-y-2">
                 <Label>Email</Label>

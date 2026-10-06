@@ -93,10 +93,6 @@ export function PatientSummaryPrintSheet({
             <span className="font-medium text-slate-900">{patient.phone || "—"}</span>
           </div>
           <div>
-            <span className="font-semibold text-slate-600 block text-[10px] uppercase">Blood Group</span>
-            <span className="font-bold text-slate-900">{patient.bloodGroup || "—"}</span>
-          </div>
-          <div>
             <span className="font-semibold text-slate-600 block text-[10px] uppercase">Registered Date</span>
             <span className="font-medium text-slate-900">{formatDate(patient.registeredOn)}</span>
           </div>
