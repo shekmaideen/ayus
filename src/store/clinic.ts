@@ -160,12 +160,12 @@ interface ClinicState {
 
   savePrescription: (input: {
     patientId: string;
-    visitId?: string;
+    visitId?: string | null | undefined;
     items: PrescriptionItem[];
     followUpDate: string | null;
     notes: string;
-    isRefill?: boolean;
-    date?: string;
+    isRefill?: boolean | undefined;
+    date?: string | undefined;
   }) => { prescription: Prescription; bill: Bill };
 
   updatePrescription: (

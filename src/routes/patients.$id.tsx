@@ -21,6 +21,16 @@ import {
   Pill,
   FileText,
   ChevronRight,
+  Eye,
+  RefreshCw,
+  Calendar,
+  Activity,
+  Check,
+  Stethoscope,
+  User,
+  DollarSign,
+  ExternalLink,
+  ChevronDown,
 } from "lucide-react";
 import { useState, useMemo } from "react";
 import { toast } from "sonner";
@@ -56,12 +66,23 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { billTotal, can, useClinic } from "@/store/clinic";
-import { formatDate, formatComplaintDateTime, initials, inr, todayISO, getNowIST, parseISTDateTime, istToUtcString } from "@/lib/format";
-import type { Bill, CaseHistory, Prescription, ChiefComplaint } from "@/data/types";
+import {
+  formatDate,
+  formatComplaintDateTime,
+  initials,
+  inr,
+  todayISO,
+  getNowIST,
+  parseISTDateTime,
+  istToUtcString,
+} from "@/lib/format";
+import type { Bill, CaseHistory, Prescription, ChiefComplaint, Visit, PrescriptionItem, FollowUp, Medicine } from "@/data/types";
 import { WhatsAppButton } from "@/components/WhatsAppButton";
-import { buildBillingMessage, buildPrescriptionMessage, buildRegistrationMessage, openWhatsAppMessage } from "@/lib/whatsapp";
-import { PrescriptionPrintSheet } from "@/components/PrescriptionPrintSheet";
+import { buildRegistrationMessage, openWhatsAppMessage } from "@/lib/whatsapp";
+import { PrescriptionPrintSheet, parseClinicalNotes, serializeClinicalNotes } from "@/components/PrescriptionPrintSheet";
 import { BillPrintSheet } from "@/components/BillPrintSheet";
+import { PatientSummaryPrintSheet } from "@/components/PatientSummaryPrintSheet";
+import { MedicineCombobox } from "@/components/MedicineCombobox";
 import {
   getPrescriptionPdfFilename,
   getBillPdfFilename,
@@ -69,14 +90,15 @@ import {
   sharePdfViaWhatsApp,
   validateAndNormalizePhone,
 } from "@/lib/pdf-share";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/patients/$id")({
   head: () => ({
     meta: [
-      { title: "Patient profile — Dr. Ayus Homoeopathy Hospital" },
-      { name: "description", content: "Case history, visits, prescriptions and bills for a clinic patient." },
-      { property: "og:title", content: "Patient profile — Dr. Ayus Homoeopathy Hospital" },
-      { property: "og:description", content: "Case history, visits, prescriptions and bills for a clinic patient." },
+      { title: "Patient Profile — Dr. Ayus Homoeopathy Hospital" },
+      { name: "description", content: "Complete medical profile, visit history, prescriptions and bills for Dr. Ayus Homoeopathy Hospital." },
+      { property: "og:title", content: "Patient Profile — Dr. Ayus Homoeopathy Hospital" },
+      { property: "og:description", content: "Complete medical profile, visit history, prescriptions and bills for Dr. Ayus Homoeopathy Hospital." },
     ],
   }),
   component: () => (
@@ -100,6 +122,24 @@ const EMPTY_CH: CaseHistory = {
   worse: [],
   updatedOn: "",
 };
+
+const uid = () => Math.random().toString(36).slice(2, 9);
+
+function blankRxRow(): PrescriptionItem {
+  return {
+    id: uid(),
+    medicineId: "",
+    medicineName: "",
+    brand: "",
+    formType: "Bottle",
+    potency: "30CH",
+    dosage: "5 drops",
+    frequency: "3 times/day",
+    duration: "5 days",
+    quantity: 1,
+    instructions: "Before food",
+  };
+}
 
 function TagInput({ label, tags, onChange }: { label: string; tags: string[]; onChange: (t: string[]) => void }) {
   const [v, setV] = useState("");
@@ -172,37 +212,31 @@ function PatientProfile() {
     createManualBill,
     updateBill,
   } = useClinic();
+
   const patient = patients.find((p) => p.id === id);
+
+  // Active workspace tab
+  const [activeTab, setActiveTab] = useState<string>("overview");
+
+  // Dialog & Sheet States
   const [editOpen, setEditOpen] = useState(false);
-  const [noteOpen, setNoteOpen] = useState(false);
   const [followUpOpen, setFollowUpOpen] = useState(false);
   const [followUpDate, setFollowUpDate] = useState("");
   const [followUpReason, setFollowUpReason] = useState("");
-  const [refillConfirm, setRefillConfirm] = useState(false);
-  const [note, setNote] = useState({ complaint: "", notes: "" });
+
   const [ch, setCh] = useState<CaseHistory>(caseHistories[id] ?? EMPTY_CH);
   const [draft, setDraft] = useState(patient);
+
   const [printingRx, setPrintingRx] = useState<Prescription | null>(null);
   const [printingBill, setPrintingBill] = useState<Bill | null>(null);
+  const [printingSummary, setPrintingSummary] = useState(false);
+
   const [billDialogOpen, setBillDialogOpen] = useState(false);
   const [billDate, setBillDate] = useState(todayISO());
   const [billFee, setBillFee] = useState<number>(settings.consultationFee ?? 300);
-  const [timelineFilter, setTimelineFilter] = useState<"all" | "visits" | "bills" | "prescriptions">("all");
-  const [billsTabStatusFilter, setBillsTabStatusFilter] = useState<"all" | "Paid" | "Pending" | "Partial">("all");
 
-  const handleCreateBill = () => {
-    if (!patient) return;
-    const newBill = createManualBill(patient.id, billDate || todayISO());
-    const customFeeNum = Number(billFee);
-    if (!isNaN(customFeeNum) && customFeeNum !== settings.consultationFee) {
-      updateBill(newBill.id, {
-        items: [{ label: "Consultation Fee", qty: 1, rate: customFeeNum }],
-      });
-    }
-    toast.success(`Bill ${newBill.invoiceNo} created for ${patient.name}`);
-    setBillDialogOpen(false);
-    navigate({ to: "/billing/$id", params: { id: newBill.id } });
-  };
+  const [billsTabStatusFilter, setBillsTabStatusFilter] = useState<"all" | "Paid" | "Pending" | "Partial">("all");
+  const [visitsViewMode, setVisitsViewMode] = useState<"timeline" | "table">("timeline");
 
   // Chief complaints state
   const [complaintDialogOpen, setComplaintDialogOpen] = useState(false);
@@ -217,7 +251,154 @@ function PatientProfile() {
   const [editTime, setEditTime] = useState<string>("");
   const [deletingComplaint, setDeletingComplaint] = useState<ChiefComplaint | null>(null);
   const [complaintSearch, setComplaintSearch] = useState("");
-  const [complaintVisitFilter, setComplaintVisitFilter] = useState("all");
+
+  // Full visit dossier view modal
+  const [fullVisitModal, setFullVisitModal] = useState<Visit | null>(null);
+
+  // ─────────────────────────────────────────────────────────────
+  // NEW VISIT WORKFLOW MODAL STATE
+  // ─────────────────────────────────────────────────────────────
+  const [newVisitOpen, setNewVisitOpen] = useState(false);
+  const [nvDate, setNvDate] = useState(todayISO());
+  const [nvType, setNvType] = useState<"New" | "Follow-up">("Follow-up");
+  const [nvComplaint, setNvComplaint] = useState("");
+  const [nvNotes, setNvNotes] = useState("");
+  const [nvIncludeRx, setNvIncludeRx] = useState(true);
+  const [nvRxItems, setNvRxItems] = useState<PrescriptionItem[]>([blankRxRow()]);
+  const [nvDiagnosis, setNvDiagnosis] = useState("");
+  const [nvSpecialInstructions, setNvSpecialInstructions] = useState("");
+  const [nvIncludeBill, setNvIncludeBill] = useState(true);
+  const [nvPaymentStatus, setNvPaymentStatus] = useState<"Paid" | "Pending">("Paid");
+  const [nvPaymentMode, setNvPaymentMode] = useState<"Cash" | "UPI" | "Card">("Cash");
+  const [nvCustomFee, setNvCustomFee] = useState<number>(settings.followUpFee ?? 250);
+  const [nvIncludeFollowUp, setNvIncludeFollowUp] = useState(false);
+  const [nvFollowUpDate, setNvFollowUpDate] = useState("");
+  const [nvFollowUpReason, setNvFollowUpReason] = useState("");
+
+  // Open New Visit Dialog initialized cleanly
+  const handleOpenNewVisit = (presetItems?: PrescriptionItem[]) => {
+    if (!patient) return;
+    const priorVisitsCount = visits.filter((v) => v.patientId === patient.id).length;
+    const isFirstVisit = priorVisitsCount === 0;
+
+    setNvDate(todayISO());
+    setNvType(isFirstVisit ? "New" : "Follow-up");
+    setNvCustomFee(isFirstVisit ? (settings.consultationFee ?? 400) : (settings.followUpFee ?? 250));
+    setNvComplaint("");
+    setNvNotes("");
+    setNvDiagnosis("");
+    setNvSpecialInstructions("");
+    setNvPaymentStatus("Paid");
+    setNvPaymentMode("Cash");
+    setNvIncludeFollowUp(false);
+    setNvFollowUpDate("");
+    setNvFollowUpReason("");
+
+    if (presetItems && presetItems.length > 0) {
+      setNvIncludeRx(true);
+      setNvRxItems(presetItems.map((it) => ({ ...it, id: uid() })));
+    } else {
+      setNvIncludeRx(true);
+      setNvRxItems([blankRxRow()]);
+    }
+
+    setNewVisitOpen(true);
+  };
+
+  // Quick Reuse / Refill from a previous prescription
+  const handleQuickReuse = (rx: Prescription) => {
+    if (!rx.items || rx.items.length === 0) {
+      toast.error("Previous prescription has no items");
+      return;
+    }
+    handleOpenNewVisit(rx.items);
+    toast.info(`Loaded ${rx.items.length} medicines from previous prescription into New Visit`);
+  };
+
+  // Save the complete Visit
+  const handleSaveCompleteVisit = () => {
+    if (!patient) return;
+    if (!nvDate) {
+      toast.error("Please specify visit date");
+      return;
+    }
+
+    const complaintStr = nvComplaint.trim() || "Routine Consultation";
+    const notesStr = nvNotes.trim() || (nvType === "New" ? "Initial consultation completed" : "Follow-up consultation completed");
+
+    // 1. Create Visit record
+    const createdVisit = addVisit({
+      patientId: patient.id,
+      date: nvDate,
+      type: nvType,
+      complaint: complaintStr,
+      notes: notesStr,
+    });
+
+    const validRxItems = nvIncludeRx ? nvRxItems.filter((i) => Boolean(i.medicineId)) : [];
+    let createdBill: Bill | null = null;
+    let createdRx: Prescription | null = null;
+
+    // 2. If prescription included
+    if (nvIncludeRx && validRxItems.length > 0) {
+      const combinedNotes = serializeClinicalNotes(nvDiagnosis, nvSpecialInstructions);
+      const rxResult = savePrescription({
+        patientId: patient.id,
+        visitId: createdVisit.id,
+        items: validRxItems,
+        followUpDate: nvIncludeFollowUp && nvFollowUpDate ? nvFollowUpDate : null,
+        notes: combinedNotes,
+        isRefill: false,
+        date: nvDate,
+      });
+      createdRx = rxResult.prescription;
+      createdBill = rxResult.bill;
+
+      // Update the generated bill's payment status & mode if selected
+      if (createdBill) {
+        const total = billTotal(createdBill);
+        updateBill(createdBill.id, {
+          status: nvPaymentStatus,
+          paymentMode: nvPaymentStatus === "Paid" ? nvPaymentMode : null,
+          amountReceived: nvPaymentStatus === "Paid" ? total : 0,
+        });
+      }
+    } else if (nvIncludeBill) {
+      // 3. Standalone Bill without prescription medicines
+      const manualBill = createManualBill(patient.id, nvDate);
+      const fee = Number(nvCustomFee) || (nvType === "New" ? settings.consultationFee : settings.followUpFee);
+      updateBill(manualBill.id, {
+        items: [{ label: nvType === "New" ? "Consultation Fee" : "Follow-up Fee", qty: 1, rate: fee }],
+        status: nvPaymentStatus,
+        paymentMode: nvPaymentStatus === "Paid" ? nvPaymentMode : null,
+        amountReceived: nvPaymentStatus === "Paid" ? fee : 0,
+      });
+      createdBill = manualBill;
+    }
+
+    // 4. Follow-up if requested and not already handled by savePrescription
+    if (nvIncludeFollowUp && nvFollowUpDate && (!nvIncludeRx || validRxItems.length === 0)) {
+      addFollowUp(patient.id, nvFollowUpDate, nvFollowUpReason || `Review for ${complaintStr}`);
+    }
+
+    toast.success(`Visit successfully recorded for ${patient.name}!`);
+    setNewVisitOpen(false);
+    setActiveTab("visits");
+  };
+
+  const handleCreateBill = () => {
+    if (!patient) return;
+    const newBill = createManualBill(patient.id, billDate || todayISO());
+    const customFeeNum = Number(billFee);
+    if (!isNaN(customFeeNum) && customFeeNum !== settings.consultationFee) {
+      updateBill(newBill.id, {
+        items: [{ label: "Consultation Fee", qty: 1, rate: customFeeNum }],
+      });
+    }
+    toast.success(`Bill ${newBill.invoiceNo} created for ${patient.name}`);
+    setBillDialogOpen(false);
+    navigate({ to: "/billing/$id", params: { id: newBill.id } });
+  };
 
   const handleSendRegistrationWhatsApp = () => {
     if (!patient) return;
@@ -309,6 +490,7 @@ function PatientProfile() {
     );
   }
 
+  // Sorted Patient Records
   const pVisits = visits.filter((v) => v.patientId === id).sort((a, b) => b.date.localeCompare(a.date));
   const pComplaints = chiefComplaints
     .filter((c) => c.patientId === id)
@@ -316,218 +498,250 @@ function PatientProfile() {
   const pPres = prescriptions.filter((p) => p.patientId === id).sort((a, b) => b.date.localeCompare(a.date));
   const pBills = bills.filter((b) => b.patientId === id).sort((a, b) => b.date.localeCompare(a.date));
   const pFollowUps = followUps.filter((f) => f.patientId === id).sort((a, b) => b.dueDate.localeCompare(a.dueDate));
-  const refills = pPres.filter((p) => p.isRefill);
-  const last = pPres[0];
-  const caseAccess = can(role, "caseHistory");
-  const canPrescribe = can(role, "prescription") === "full";
-  const canEdit = can(role, "patients") === "full";
 
+  const lastVisit = pVisits[0];
+  const lastPrescription = pPres[0];
+  const lastBill = pBills[0];
+  const pendingFollowUp = pFollowUps.find((f) => f.status === "Pending");
+
+  // Approximate Date of Birth
+  const birthYear = new Date().getFullYear() - patient.age;
+  const approxDob = `01/01/${birthYear}`;
+
+  // Financial summary
+  const totalBilled = pBills.reduce((acc, b) => acc + billTotal(b), 0);
+  const totalReceived = pBills.reduce((acc, b) => acc + (b.amountReceived || 0), 0);
+  const outstandingBalance = Math.max(0, totalBilled - totalReceived);
+
+  // RBAC permissions
+  const isDoctor = role === "doctor";
+  const caseAccess = can(role, "caseHistory");
+  const canPrescribe = isDoctor && can(role, "prescription") === "full";
+  const canEditDemographics = can(role, "patients") === "full";
+  const canManageBilling = can(role, "billing") !== "hidden";
+
+  // Filtered Chief Complaints
   const filteredComplaints = useMemo(() => {
     let list = pComplaints;
-    if (complaintVisitFilter && complaintVisitFilter !== "all") {
-      if (complaintVisitFilter === "unlinked") {
-        list = list.filter((c) => !c.visitId);
-      } else {
-        list = list.filter((c) => c.visitId === complaintVisitFilter);
-      }
-    }
     if (complaintSearch.trim()) {
       const q = complaintSearch.toLowerCase().trim();
       list = list.filter((c) => c.complaint.toLowerCase().includes(q));
     }
     return list;
-  }, [pComplaints, complaintVisitFilter, complaintSearch]);
+  }, [pComplaints, complaintSearch]);
 
-  const timelineGroups = useMemo(() => {
-    const map = new Map<
-      string,
-      {
-        date: string;
-        visits: typeof pVisits;
-        prescriptions: typeof pPres;
-        bills: typeof pBills;
-      }
-    >();
+  // Unified Chronological Activity Feed
+  const recentActivities = useMemo(() => {
+    const list: {
+      id: string;
+      date: string;
+      type: "visit" | "prescription" | "bill" | "followup";
+      title: string;
+      subtitle: string;
+      badge?: string | undefined;
+    }[] = [];
 
-    const getEntry = (d: string) => {
-      let entry = map.get(d);
-      if (!entry) {
-        entry = { date: d, visits: [], prescriptions: [], bills: [] };
-        map.set(d, entry);
-      }
-      return entry;
-    };
+    pVisits.forEach((v) => {
+      list.push({
+        id: `v-${v.id}`,
+        date: v.date,
+        type: "visit",
+        title: `Visit Completed (${v.type})`,
+        subtitle: v.complaint || "Routine Consultation",
+        badge: "Completed",
+      });
+    });
 
-    pVisits.forEach((v) => getEntry(v.date).visits.push(v));
-    pPres.forEach((rx) => getEntry(rx.date).prescriptions.push(rx));
-    pBills.forEach((b) => getEntry(b.date).bills.push(b));
+    pPres.forEach((p) => {
+      list.push({
+        id: `rx-${p.id}`,
+        date: p.date,
+        type: "prescription",
+        title: `Prescription Created`,
+        subtitle: `${p.items.length} medicine(s) prescribed`,
+        badge: p.isRefill ? "Refill" : undefined,
+      });
+    });
 
-    const allDates = Array.from(map.keys()).sort((a, b) => b.localeCompare(a));
-    return allDates.map((d) => map.get(d)!);
-  }, [pVisits, pPres, pBills]);
+    pBills.forEach((b) => {
+      list.push({
+        id: `b-${b.id}`,
+        date: b.date,
+        type: "bill",
+        title: `Bill ${b.invoiceNo} (${b.status})`,
+        subtitle: `Amount: ${inr(billTotal(b))}${b.paymentMode ? ` via ${b.paymentMode}` : ""}`,
+        badge: b.status,
+      });
+    });
 
-  const filteredTimelineGroups = useMemo(() => {
-    if (timelineFilter === "all") return timelineGroups;
-    if (timelineFilter === "visits") return timelineGroups.filter((g) => g.visits.length > 0);
-    if (timelineFilter === "bills") return timelineGroups.filter((g) => g.bills.length > 0);
-    if (timelineFilter === "prescriptions") return timelineGroups.filter((g) => g.prescriptions.length > 0);
-    return timelineGroups;
-  }, [timelineGroups, timelineFilter]);
+    pFollowUps.forEach((f) => {
+      list.push({
+        id: `fu-${f.id}`,
+        date: f.dueDate,
+        type: "followup",
+        title: `Follow-up (${f.status})`,
+        subtitle: f.reason || "Review checkup",
+        badge: f.status,
+      });
+    });
 
-  const filteredBills = useMemo(() => {
-    if (billsTabStatusFilter === "all") return pBills;
-    return pBills.filter((b) => b.status === billsTabStatusFilter);
-  }, [pBills, billsTabStatusFilter]);
+    return list.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 10);
+  }, [pVisits, pPres, pBills, pFollowUps]);
 
   return (
     <>
-      <Button asChild variant="ghost" size="sm" className="mb-4 -ml-2">
-        <Link to="/patients">
-          <ArrowLeft className="mr-1.5 h-4 w-4" /> All patients
-        </Link>
-      </Button>
+      {/* ─────────────────────────────────────────────────────────────
+          PATIENT HEADER (The Central Medical Workspace Header)
+      ───────────────────────────────────────────────────────────── */}
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="card-soft p-5 border-l-4 border-l-primary shadow-sm bg-card"
+      >
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          {/* Left: Demographics Details */}
+          <div className="flex items-start gap-4">
+            <Avatar className="h-16 w-16 border-2 border-primary/20 shrink-0 shadow-inner">
+              <AvatarFallback className="bg-primary/10 text-primary text-xl font-bold font-display">
+                {initials(patient.name)}
+              </AvatarFallback>
+            </Avatar>
 
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="card-soft p-6">
-        <div className="flex flex-wrap items-start gap-5">
-          <Avatar className="h-16 w-16">
-            <AvatarFallback className="bg-primary text-lg text-primary-foreground">{initials(patient.name)}</AvatarFallback>
-          </Avatar>
-          <div className="min-w-[14rem] flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="font-display text-3xl">{patient.name}</h1>
-              <Badge variant="outline" className="font-mono">{patient.regNo}</Badge>
-              {patient.allergies.map((a) => (
-                <Badge key={a} className="bg-destructive text-destructive-foreground hover:bg-destructive">
-                  <AlertTriangle className="mr-1 h-3 w-3" /> {a}
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <h1 className="font-display text-2xl font-bold tracking-tight text-foreground">
+                  {patient.name}
+                </h1>
+                <Badge variant="outline" className="font-mono text-xs font-semibold px-2 py-0.5 border-primary/40 text-primary bg-primary/5">
+                  {patient.regNo}
                 </Badge>
-              ))}
+                {patient.allergies && patient.allergies.length > 0 && (
+                  <Badge variant="destructive" className="text-xs px-2 py-0.5">
+                    <AlertTriangle className="mr-1 h-3 w-3" /> Allergies: {patient.allergies.join(", ")}
+                  </Badge>
+                )}
+                {!patient.active && (
+                  <Badge variant="secondary" className="text-xs">
+                    Inactive
+                  </Badge>
+                )}
+              </div>
+
+              {/* Sub-bar: Core Demographics Grid */}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground pt-0.5">
+                <span className="font-medium text-foreground">
+                  Age: <strong className="text-foreground">{patient.age} Yrs</strong>
+                </span>
+                <span>&bull;</span>
+                <span className="font-medium text-foreground">
+                  Gender: <strong className="text-foreground">{patient.gender}</strong>
+                </span>
+                <span>&bull;</span>
+                <span>
+                  DOB: <strong className="text-foreground">{approxDob}</strong>
+                </span>
+                <span>&bull;</span>
+                <span className="flex items-center gap-1 text-foreground">
+                  <Phone className="h-3 w-3 text-primary" />
+                  <strong>{patient.phone || "—"}</strong>
+                </span>
+                {patient.bloodGroup && (
+                  <>
+                    <span>&bull;</span>
+                    <span>
+                      Blood: <strong className="text-foreground">{patient.bloodGroup}</strong>
+                    </span>
+                  </>
+                )}
+                <span>&bull;</span>
+                <span>
+                  Registered: <strong>{formatDate(patient.registeredOn)}</strong>
+                </span>
+              </div>
+
+              {patient.address && (
+                <p className="flex items-center gap-1.5 text-xs text-muted-foreground pt-0.5">
+                  <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate max-w-xl">{patient.address}</span>
+                </p>
+              )}
             </div>
-            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
-              <span>{patient.age} years · {patient.gender}</span>
-              <span>Blood group {patient.bloodGroup}</span>
-              <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" /> {patient.phone}</span>
-              <span className="flex items-center gap-1.5"><Mail className="h-3.5 w-3.5" /> {patient.email}</span>
-            </div>
-            <p className="mt-1 flex items-start gap-1.5 text-sm text-muted-foreground">
-              <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {patient.address}
-            </p>
           </div>
-          <div className="flex flex-col items-end gap-3">
+
+          {/* Right: Quick Action Buttons */}
+          <div className="flex flex-col items-end gap-2.5 shrink-0">
             <div className="flex items-center gap-2">
-              <Label htmlFor="active" className="text-sm text-muted-foreground">Active</Label>
+              <Label htmlFor="patient-active-toggle" className="text-xs text-muted-foreground">
+                Active
+              </Label>
               <Switch
-                id="active"
+                id="patient-active-toggle"
                 checked={patient.active}
-                disabled={!canEdit}
+                disabled={!canEditDemographics}
                 onCheckedChange={(v) => {
                   updatePatient(patient.id, { active: v });
                   toast.success(v ? "Patient marked active" : "Patient marked inactive");
                 }}
               />
             </div>
-            <div className="flex flex-wrap gap-2">
-              {canEdit && (
-                <Button variant="outline" className="rounded-xl" onClick={() => { setDraft(patient); setEditOpen(true); }}>
-                  <Pencil className="mr-2 h-4 w-4" /> Edit
+
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {/* PROMINENT NEW VISIT BUTTON */}
+              {isDoctor && (
+                <Button
+                  className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm font-semibold px-4"
+                  onClick={() => handleOpenNewVisit()}
+                >
+                  <Plus className="mr-1.5 h-4 w-4" /> New Visit
                 </Button>
               )}
-              {canEdit && (
-                <Dialog open={followUpOpen} onOpenChange={setFollowUpOpen}>
-                  <DialogTrigger asChild>
-                    <Button variant="outline" className="rounded-xl">
-                      <CalendarClock className="mr-2 h-4 w-4" /> Add follow-up
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Schedule follow-up</DialogTitle>
-                      <DialogDescription>Set a follow-up reminder for {patient.name}.</DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 py-4">
-                      <div className="space-y-2">
-                        <Label>Date</Label>
-                        <Input
-                          type="date"
-                          value={followUpDate}
-                          min={todayISO()}
-                          onChange={(e) => setFollowUpDate(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Reason</Label>
-                        <Input
-                          placeholder="e.g. Check progress on new medicine"
-                          value={followUpReason}
-                          onChange={(e) => setFollowUpReason(e.target.value)}
-                        />
-                      </div>
-                    </div>
-                    <DialogFooter>
-                      <Button variant="outline" onClick={() => setFollowUpOpen(false)}>Cancel</Button>
-                      <Button
-                        onClick={() => {
-                          if (!followUpDate) {
-                            toast.error("Please select a date");
-                            return;
-                          }
-                          addFollowUp(patient.id, followUpDate, followUpReason || "General review");
-                          toast.success("Follow-up scheduled");
-                          setFollowUpOpen(false);
-                          setFollowUpDate("");
-                          setFollowUpReason("");
-                        }}
-                      >
-                        Save follow-up
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-              )}
-              {caseAccess === "full" && (
+
+              {/* Edit Patient */}
+              {canEditDemographics && (
                 <Button
                   variant="outline"
-                  className="rounded-xl border-primary/30 text-primary hover:bg-primary/10 shadow-sm"
+                  className="rounded-xl shadow-xs"
                   onClick={() => {
-                    const todayVisit = pVisits.find((v) => v.date === todayISO());
-                    setSelectedVisitId(todayVisit ? todayVisit.id : "");
-                    setNewComplaintText("");
-                    setComplaintDialogOpen(true);
+                    setDraft(patient);
+                    setEditOpen(true);
                   }}
                 >
-                  <Plus className="mr-1.5 h-4 w-4" /> Add Complaint
+                  <Pencil className="mr-1.5 h-3.5 w-3.5" /> Edit Patient
                 </Button>
               )}
-              {canPrescribe && (
-                <Button asChild className="rounded-xl">
-                  <Link to="/prescriptions/new" search={{ patientId: patient.id }}>
-                    <Plus className="mr-2 h-4 w-4" /> New prescription
-                  </Link>
-                </Button>
-              )}
-              {can(role, "billing") !== "hidden" && (
-                <Button
-                  className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
-                  onClick={() => {
-                    setBillDate(todayISO());
-                    setBillFee(settings.consultationFee ?? 300);
-                    setBillDialogOpen(true);
-                  }}
-                >
-                  <Receipt className="mr-2 h-4 w-4" /> New Bill
-                </Button>
-              )}
-              <WhatsAppButton label="Send WhatsApp" isPdf={false} onClick={handleSendRegistrationWhatsApp} />
+
+              {/* WhatsApp Button */}
+              <WhatsAppButton
+                label="WhatsApp"
+                isPdf={false}
+                onClick={handleSendRegistrationWhatsApp}
+              />
+
+              {/* Print Patient Summary */}
+              <Button
+                variant="outline"
+                className="rounded-xl shadow-xs"
+                onClick={() => setPrintingSummary(true)}
+              >
+                <Printer className="mr-1.5 h-3.5 w-3.5 text-slate-700 dark:text-slate-200" /> Summary
+              </Button>
             </div>
           </div>
         </div>
       </motion.div>
 
-      <Tabs defaultValue="overview" className="mt-6">
-        <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 rounded-xl bg-secondary p-1">
-          <TabsTrigger value="overview" className="rounded-lg">Overview</TabsTrigger>
+      {/* ─────────────────────────────────────────────────────────────
+          PATIENT WORKSPACE TABS NAVIGATION
+      ───────────────────────────────────────────────────────────── */}
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-5">
+        <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 rounded-xl bg-secondary/80 p-1.5 border">
+          <TabsTrigger value="overview" className="rounded-lg text-xs font-semibold px-3.5 py-2">
+            Overview
+          </TabsTrigger>
+
           {caseAccess !== "hidden" && (
-            <TabsTrigger value="complaints" className="rounded-lg">
-              Chief Complaints
+            <TabsTrigger value="case" className="rounded-lg text-xs font-semibold px-3.5 py-2">
+              Case History
               {pComplaints.length > 0 && (
                 <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary/20 px-1 text-[10px] font-bold text-primary">
                   {pComplaints.length}
@@ -535,436 +749,345 @@ function PatientProfile() {
               )}
             </TabsTrigger>
           )}
-          {caseAccess !== "hidden" && <TabsTrigger value="case" className="rounded-lg">Case History</TabsTrigger>}
-          <TabsTrigger value="timeline" className="rounded-lg">
-            Timeline
-            {timelineGroups.length > 0 && (
-              <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary/20 px-1 text-[10px] font-bold text-primary">
-                {timelineGroups.length}
-              </span>
-            )}
+
+          <TabsTrigger value="visits" className="rounded-lg text-xs font-semibold px-3.5 py-2">
+            Visits
+            <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-600/20 px-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
+              {pVisits.length}
+            </span>
           </TabsTrigger>
-          <TabsTrigger value="followups" className="rounded-lg">
+
+          {caseAccess !== "hidden" && (
+            <TabsTrigger value="prescriptions" className="rounded-lg text-xs font-semibold px-3.5 py-2">
+              Prescriptions
+              <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary/20 px-1 text-[10px] font-bold text-primary">
+                {pPres.length}
+              </span>
+            </TabsTrigger>
+          )}
+
+          {canManageBilling && (
+            <TabsTrigger value="bills" className="rounded-lg text-xs font-semibold px-3.5 py-2">
+              Bills
+              <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500/20 px-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
+                {pBills.length}
+              </span>
+              {outstandingBalance > 0 && (
+                <span className="ml-1.5 h-2 w-2 rounded-full bg-destructive" title="Pending balance" />
+              )}
+            </TabsTrigger>
+          )}
+
+          <TabsTrigger value="followups" className="rounded-lg text-xs font-semibold px-3.5 py-2">
             Follow-ups
             {pFollowUps.filter((f) => f.status === "Pending").length > 0 && (
-              <span className="ml-1.5 inline-flex h-4 w-4 items-center justify-center rounded-full bg-warning text-[10px] font-bold text-white">
+              <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 text-[10px] font-bold text-white px-1">
                 {pFollowUps.filter((f) => f.status === "Pending").length}
               </span>
             )}
           </TabsTrigger>
-          {caseAccess !== "hidden" && (
-            <TabsTrigger value="rx" className="rounded-lg">
-              Prescriptions
-              {pPres.length > 0 && (
-                <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary/20 px-1 text-[10px] font-bold text-primary">
-                  {pPres.length}
-                </span>
-              )}
-            </TabsTrigger>
-          )}
-          <TabsTrigger value="bills" className="rounded-lg">
-            Bills
-            {pBills.length > 0 && (
-              <span className="ml-1.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-emerald-500/20 px-1 text-[10px] font-bold text-emerald-700 dark:text-emerald-300">
-                {pBills.length}
-              </span>
-            )}
-            {pBills.some((b) => b.status !== "Paid") && (
-              <span className="ml-1 h-2 w-2 rounded-full bg-destructive" title="Unpaid balance" />
-            )}
-          </TabsTrigger>
-          {caseAccess !== "hidden" && <TabsTrigger value="refills" className="rounded-lg">Refill History</TabsTrigger>}
         </TabsList>
 
-        <TabsContent value="overview" className="mt-5 grid gap-4 lg:grid-cols-3">
-          <div className="card-soft p-5 lg:col-span-2">
-            <h3 className="mb-4 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Summary</h3>
-            <div className="grid gap-4 sm:grid-cols-3">
-              {[
-                ["Visits", pVisits.length],
-                ["Prescriptions", pPres.length],
-                ["Bills", pBills.length],
-              ].map(([l, v]) => (
-                <div key={l as string} className="rounded-xl bg-secondary/60 p-4">
-                  <p className="font-display text-2xl">{v as number}</p>
-                  <p className="text-xs uppercase tracking-wider text-muted-foreground">{l as string}</p>
-                </div>
-              ))}
-            </div>
-            <dl className="mt-5 grid gap-3 text-sm sm:grid-cols-2">
-              <div><dt className="text-muted-foreground">Occupation</dt><dd className="font-medium">{patient.occupation || "—"}</dd></div>
-              <div><dt className="text-muted-foreground">Registered on</dt><dd className="font-medium">{formatDate(patient.registeredOn)}</dd></div>
+        {/* ═════════════════════════════════════════════════════════════
+            TAB 1: OVERVIEW (Concise Medical Summary & Recent Activity)
+        ═════════════════════════════════════════════════════════════ */}
+        <TabsContent value="overview" className="mt-4 space-y-4">
+          {/* Key Metric Highlights */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="card-soft p-4 flex items-center justify-between border-l-4 border-l-blue-500">
               <div>
-                <dt className="text-muted-foreground">Latest Chief Complaint</dt>
-                <dd className="font-medium">
-                  {pComplaints[0] ? (
-                    <div>
-                      <span>{pComplaints[0].complaint}</span>
-                      <span className="block text-xs font-normal text-muted-foreground">
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Visits</p>
+                <p className="text-2xl font-bold font-display mt-0.5">{pVisits.length}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Last: {lastVisit ? formatDate(lastVisit.date) : "No visits yet"}
+                </p>
+              </div>
+              <div className="h-10 w-10 rounded-xl bg-blue-500/10 text-blue-600 flex items-center justify-center">
+                <Stethoscope className="h-5 w-5" />
+              </div>
+            </div>
+
+            <div className="card-soft p-4 flex items-center justify-between border-l-4 border-l-emerald-500">
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Prescriptions</p>
+                <p className="text-2xl font-bold font-display mt-0.5">{pPres.length}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Last: {lastPrescription ? formatDate(lastPrescription.date) : "None"}
+                </p>
+              </div>
+              <div className="h-10 w-10 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center">
+                <Pill className="h-5 w-5" />
+              </div>
+            </div>
+
+            <div className="card-soft p-4 flex items-center justify-between border-l-4 border-l-purple-500">
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Next Follow-up</p>
+                <p className="text-base font-bold text-foreground mt-1 truncate">
+                  {pendingFollowUp ? formatDate(pendingFollowUp.dueDate) : "None scheduled"}
+                </p>
+                <p className="text-[11px] text-muted-foreground truncate">
+                  {pendingFollowUp ? pendingFollowUp.reason || "Review" : "All cleared"}
+                </p>
+              </div>
+              <div className="h-10 w-10 rounded-xl bg-purple-500/10 text-purple-600 flex items-center justify-center">
+                <CalendarClock className="h-5 w-5" />
+              </div>
+            </div>
+
+            <div className="card-soft p-4 flex items-center justify-between border-l-4 border-l-amber-500">
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Billing Status</p>
+                <p className="text-xl font-bold font-display mt-0.5">
+                  {outstandingBalance > 0 ? (
+                    <span className="text-destructive font-mono">{inr(outstandingBalance)} Due</span>
+                  ) : (
+                    <span className="text-emerald-600 dark:text-emerald-400">All Settled</span>
+                  )}
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Total Billed: {inr(totalBilled)}
+                </p>
+              </div>
+              <div className="h-10 w-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
+                <Receipt className="h-5 w-5" />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-3">
+            {/* Left 2 Cols: Clinical Snapshot & Latest Prescriptions */}
+            <div className="space-y-4 lg:col-span-2">
+              {/* Important Medical Alerts */}
+              <div className="card-soft p-4 border bg-card">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-2">
+                  <Activity className="h-4 w-4 text-primary" /> Clinical Snapshot &amp; Demographics
+                </h3>
+
+                <dl className="grid gap-3 text-xs sm:grid-cols-3">
+                  <div>
+                    <dt className="text-muted-foreground">Occupation</dt>
+                    <dd className="font-semibold text-foreground text-sm">{patient.occupation || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Blood Group</dt>
+                    <dd className="font-semibold text-foreground text-sm">{patient.bloodGroup || "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Registration Date</dt>
+                    <dd className="font-semibold text-foreground text-sm">{formatDate(patient.registeredOn)}</dd>
+                  </div>
+                </dl>
+
+                {/* Latest Chief Complaint Box */}
+                {pComplaints[0] && (
+                  <div className="mt-3 p-3 rounded-xl bg-primary/5 border border-primary/20">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold uppercase tracking-wider text-primary">
+                        Latest Chief Complaint
+                      </span>
+                      <span className="text-[10px] text-muted-foreground font-mono">
                         {formatComplaintDateTime(pComplaints[0].createdAt)}
                       </span>
                     </div>
-                  ) : (
-                    caseHistories[id]?.chiefComplaint || "Not recorded"
-                  )}
-                </dd>
+                    <p className="mt-1 text-sm font-medium text-foreground">
+                      &ldquo;{pComplaints[0].complaint}&rdquo;
+                    </p>
+                  </div>
+                )}
               </div>
-              <div><dt className="text-muted-foreground">Outstanding</dt><dd className="font-medium">{inr(pBills.reduce((s, b) => s + (billTotal(b) - b.amountReceived), 0))}</dd></div>
-            </dl>
-          </div>
 
-          {can(role, "refill") === "full" && (
-            <div className="card-soft p-5">
-              <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-muted-foreground">Quick refill</h3>
-              {last ? (
-                <>
-                  <p className="text-xs text-muted-foreground">Last prescription · {formatDate(last.date)}</p>
-                  <ul className="mt-3 space-y-2 text-sm">
-                    {last.items.map((i) => (
-                      <li key={i.id} className="rounded-lg bg-secondary/60 px-3 py-2">
-                        <span className="font-medium">{i.medicineName}</span> {i.potency}
-                        <span className="block text-xs text-muted-foreground">{i.dosage} · {i.frequency} · {i.duration}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  {refillConfirm ? (
-                    <div className="mt-4 flex flex-col gap-2 rounded-xl border border-warning/30 bg-warning-soft/40 p-3">
-                      <p className="text-xs font-medium">Confirm one-click refill of {last.items.length} medicine(s)?</p>
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          className="flex-1 rounded-lg"
-                          onClick={() => {
-                            savePrescription({
-                              patientId: patient.id,
-                              items: last.items,
-                              followUpDate: null,
-                              notes: `Refill of prescription from ${formatDate(last.date)}`,
-                              isRefill: true,
-                            });
-                            toast.success("Refill prescription created!");
-                            setRefillConfirm(false);
-                          }}
-                        >
-                          <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Yes, create refill
-                        </Button>
-                        <Button size="sm" variant="ghost" className="rounded-lg" onClick={() => setRefillConfirm(false)}>
-                          Cancel
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-4 flex gap-2">
+              {/* Latest Prescription Card */}
+              <div className="card-soft p-4 border bg-card">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+                    <Pill className="h-4 w-4 text-emerald-600" /> Latest Prescription
+                  </h3>
+                  {lastPrescription && (
+                    <div className="flex items-center gap-2">
                       <Button
                         size="sm"
-                        className="flex-1 rounded-xl"
                         variant="outline"
-                        onClick={() => setRefillConfirm(true)}
+                        className="h-7 text-xs rounded-lg"
+                        onClick={() => handleQuickReuse(lastPrescription)}
                       >
-                        <RotateCcw className="mr-2 h-4 w-4" /> One-click refill
+                        <RefreshCw className="mr-1 h-3 w-3 text-primary" /> Use Again
                       </Button>
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="rounded-xl"
-                        onClick={() => navigate({ to: "/prescriptions/new", search: { patientId: patient.id, refill: last.id } })}
+                        className="h-7 text-xs text-primary"
+                        onClick={() => setActiveTab("prescriptions")}
                       >
-                        Edit & refill
+                        View All <ChevronRight className="ml-1 h-3 w-3" />
                       </Button>
                     </div>
                   )}
-                </>
-              ) : (
-                <p className="py-6 text-center text-sm text-muted-foreground">No prescriptions yet.</p>
-              )}
-            </div>
-          )}
-        </TabsContent>
-
-        {caseAccess !== "hidden" && (
-          <TabsContent value="complaints" className="mt-5 space-y-4">
-            <div className="card-soft p-5">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b">
-                <div>
-                  <h3 className="text-base font-semibold text-foreground">Chief Complaints</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Chronological clinical complaint history · {pComplaints.length} record{pComplaints.length === 1 ? "" : "s"}
-                  </p>
                 </div>
-                {caseAccess === "full" && (
-                  <Button
-                    className="rounded-xl shadow-sm"
-                    onClick={() => {
-                      const todayVisit = pVisits.find((v) => v.date === todayISO());
-                      setSelectedVisitId(todayVisit ? todayVisit.id : "");
-                      setNewComplaintText("");
-                      const now = getNowIST();
-                      setComplaintDate(now.date);
-                      setComplaintTime(now.time);
-                      setComplaintDialogOpen(true);
-                    }}
-                  >
-                    <Plus className="mr-1.5 h-4 w-4" /> Add Chief Complaint
-                  </Button>
-                )}
-              </div>
 
-              {pComplaints.length > 0 && (
-                <div className="mt-4 flex flex-col sm:flex-row items-center gap-3">
-                  <div className="relative flex-1 w-full">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Search complaints..."
-                      value={complaintSearch}
-                      onChange={(e) => setComplaintSearch(e.target.value)}
-                      className="pl-9 h-9"
-                    />
-                  </div>
-                  {pVisits.length > 0 && (
-                    <div className="w-full sm:w-64">
-                      <Select value={complaintVisitFilter} onValueChange={setComplaintVisitFilter}>
-                        <SelectTrigger className="h-9">
-                          <SelectValue placeholder="Filter by visit" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">All Visits ({pComplaints.length})</SelectItem>
-                          <SelectItem value="unlinked">General Consultation (Unlinked)</SelectItem>
-                          {pVisits.map((v) => (
-                            <SelectItem key={v.id} value={v.id}>
-                              Visit on {formatDate(v.date)} ({v.type})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                {lastPrescription ? (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground pb-2 border-b">
+                      <span>Date: <strong className="text-foreground">{formatDate(lastPrescription.date)}</strong></span>
+                      {lastPrescription.isRefill && <Badge variant="secondary" className="text-[10px]">Refill</Badge>}
                     </div>
-                  )}
-                  {(complaintSearch || complaintVisitFilter !== "all") && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => {
-                        setComplaintSearch("");
-                        setComplaintVisitFilter("all");
-                      }}
-                      className="h-9 px-3 text-xs text-muted-foreground"
-                    >
-                      Reset filters
-                    </Button>
-                  )}
-                </div>
-              )}
 
-              <div className="mt-6">
-                {filteredComplaints.length === 0 ? (
-                  <div className="py-12 text-center text-muted-foreground">
-                    {pComplaints.length === 0 ? (
-                      <div className="flex flex-col items-center gap-3">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-secondary">
-                          <Clock className="h-6 w-6 text-muted-foreground" />
+                    <div className="divide-y text-xs">
+                      {lastPrescription.items.slice(0, 4).map((it, idx) => (
+                        <div key={idx} className="py-1.5 flex items-center justify-between">
+                          <div>
+                            <span className="font-semibold text-foreground">{it.medicineName}</span>
+                            <span className="ml-1.5 font-mono text-primary font-medium">({it.potency})</span>
+                            <span className="ml-1.5 text-muted-foreground">· {it.dosage} · {it.frequency}</span>
+                          </div>
+                          <span className="text-muted-foreground font-mono text-[11px]">{it.duration}</span>
                         </div>
-                        <div>
-                          <p className="text-sm font-medium text-foreground">No chief complaints recorded yet</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            Every new consultation can record distinct date-stamped complaints.
-                          </p>
-                        </div>
-                        {caseAccess === "full" && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="mt-2 rounded-xl"
-                            onClick={() => {
-                              const todayVisit = pVisits.find((v) => v.date === todayISO());
-                              setSelectedVisitId(todayVisit ? todayVisit.id : "");
-                              setNewComplaintText("");
-                              const now = getNowIST();
-                              setComplaintDate(now.date);
-                              setComplaintTime(now.time);
-                              setComplaintDialogOpen(true);
-                            }}
-                          >
-                            <Plus className="mr-1.5 h-4 w-4" /> Add First Complaint
-                          </Button>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="py-6">
-                        <p className="text-sm">No complaints match your search or filter.</p>
-                        <Button
-                          variant="link"
-                          size="sm"
-                          className="mt-1 text-xs"
-                          onClick={() => {
-                            setComplaintSearch("");
-                            setComplaintVisitFilter("all");
-                          }}
-                        >
-                          Clear search and filters
-                        </Button>
-                      </div>
+                      ))}
+                    </div>
+
+                    {lastPrescription.items.length > 4 && (
+                      <p className="text-xs text-muted-foreground italic pt-1">
+                        +{lastPrescription.items.length - 4} more medicines in this prescription.
+                      </p>
                     )}
                   </div>
                 ) : (
-                  <div className="relative border-l-2 border-border/80 pl-6 sm:pl-8 space-y-6">
-                    {filteredComplaints.map((c) => {
-                      const linkedVisit = c.visitId ? visits.find((v) => v.id === c.visitId) : null;
-                      return (
-                        <div key={c.id} className="relative group">
-                          {/* Timeline node */}
-                          <div className="absolute -left-[31px] sm:-left-[39px] top-2 h-3.5 w-3.5 rounded-full border-2 border-primary bg-background ring-4 ring-card" />
-
-                          <div className="rounded-xl border border-border/70 bg-card p-4 sm:p-5 shadow-sm hover:border-primary/40 transition-colors">
-                            <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-border/40">
-                              <div className="flex flex-wrap items-center gap-2">
-                                <span className="font-semibold text-sm text-foreground">
-                                  {formatComplaintDateTime(c.createdAt)}
-                                </span>
-                                {linkedVisit ? (
-                                  <Badge variant="outline" className="border-primary/30 bg-primary/5 text-primary text-xs font-normal">
-                                    Visit: {formatDate(linkedVisit.date)} ({linkedVisit.type})
-                                  </Badge>
-                                ) : (
-                                  <Badge variant="secondary" className="text-muted-foreground text-xs font-normal">
-                                    General Consultation
-                                  </Badge>
-                                )}
-                              </div>
-
-                              {caseAccess === "full" && (
-                                <div className="flex items-center gap-1">
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground rounded-lg"
-                                    title="Edit complaint"
-                                    onClick={() => {
-                                      setEditingComplaint(c);
-                                      setEditText(c.complaint);
-                                      setEditVisitId(c.visitId || "");
-                                      const parsed = parseISTDateTime(c.createdAt);
-                                      setEditDate(parsed.date);
-                                      setEditTime(parsed.time);
-                                    }}
-                                  >
-                                    <Pencil className="h-3.5 w-3.5" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive rounded-lg"
-                                    title="Delete complaint"
-                                    onClick={() => setDeletingComplaint(c)}
-                                  >
-                                    <Trash2 className="h-3.5 w-3.5" />
-                                  </Button>
-                                </div>
-                              )}
-                            </div>
-
-                            <p className="mt-3 text-sm sm:text-base font-medium text-foreground whitespace-pre-wrap leading-relaxed">
-                              {c.complaint}
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                  <p className="text-xs text-muted-foreground py-4 text-center">
+                    No prescriptions recorded yet.
+                  </p>
                 )}
               </div>
             </div>
-          </TabsContent>
-        )}
 
-        <TabsContent value="followups" className="mt-5">
-          <div className="card-soft p-5">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                Follow-up history · {pFollowUps.length} total
+            {/* Right Col: Recent Activity Feed */}
+            <div className="card-soft p-4 border bg-card">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-2">
+                <Clock className="h-4 w-4 text-primary" /> Recent Activity
               </h3>
-              {canEdit && (
+
+              {recentActivities.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-8 text-center">
+                  No activity recorded for this patient yet.
+                </p>
+              ) : (
+                <div className="space-y-3 relative before:absolute before:inset-0 before:left-3.5 before:w-0.5 before:bg-border/60">
+                  {recentActivities.map((act) => (
+                    <div key={act.id} className="relative flex items-start gap-3 pl-1">
+                      <div className="h-6 w-6 rounded-full bg-background border-2 border-primary shrink-0 flex items-center justify-center z-10">
+                        {act.type === "visit" ? (
+                          <Stethoscope className="h-3 w-3 text-primary" />
+                        ) : act.type === "prescription" ? (
+                          <Pill className="h-3 w-3 text-emerald-600" />
+                        ) : act.type === "bill" ? (
+                          <Receipt className="h-3 w-3 text-amber-600" />
+                        ) : (
+                          <CalendarClock className="h-3 w-3 text-purple-600" />
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-1">
+                          <p className="text-xs font-semibold text-foreground truncate">{act.title}</p>
+                          <span className="text-[10px] text-muted-foreground whitespace-nowrap">{formatDate(act.date)}</span>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground truncate">{act.subtitle}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* ═════════════════════════════════════════════════════════════
+            TAB 2: CASE HISTORY (Chief Complaints + Clinical Modalities)
+        ═════════════════════════════════════════════════════════════ */}
+        <TabsContent value="case" className="mt-4 space-y-5">
+          {/* Section A: Chief Complaints Chronological History */}
+          <div className="card-soft p-5 border bg-card">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4 pb-3 border-b">
+              <div>
+                <h3 className="text-base font-bold text-foreground flex items-center gap-2">
+                  <Activity className="h-4 w-4 text-primary" /> Chief Complaints History
+                </h3>
+                <p className="text-xs text-muted-foreground">
+                  Chronological timeline of all symptoms and clinical complaints recorded for this patient.
+                </p>
+              </div>
+
+              {isDoctor && (
                 <Button
                   size="sm"
-                  variant="outline"
-                  className="rounded-xl"
-                  onClick={() => setFollowUpOpen(true)}
+                  className="rounded-xl bg-primary hover:bg-primary/90 text-primary-foreground text-xs"
+                  onClick={() => {
+                    setNewComplaintText("");
+                    setSelectedVisitId("");
+                    setComplaintDate(getNowIST().date);
+                    setComplaintTime(getNowIST().time);
+                    setComplaintDialogOpen(true);
+                  }}
                 >
-                  <CalendarClock className="mr-1.5 h-3.5 w-3.5" /> Add follow-up
+                  <Plus className="mr-1.5 h-3.5 w-3.5" /> Add Chief Complaint
                 </Button>
               )}
             </div>
 
-            {pFollowUps.length === 0 ? (
-              <div className="flex flex-col items-center gap-3 py-14 text-center">
-                <CalendarClock className="h-10 w-10 text-muted-foreground" strokeWidth={1.2} />
-                <p className="text-sm text-muted-foreground">No follow-ups scheduled for this patient yet.</p>
-                {canEdit && (
-                  <Button variant="outline" size="sm" className="rounded-xl" onClick={() => setFollowUpOpen(true)}>
-                    Schedule first follow-up
-                  </Button>
-                )}
+            {/* Complaints List */}
+            {pComplaints.length === 0 ? (
+              <div className="text-center py-8 text-xs text-muted-foreground">
+                No chief complaints recorded yet. Click &quot;Add Chief Complaint&quot; above to log the patient&apos;s symptoms.
               </div>
             ) : (
-              <div className="relative space-y-3">
-                {pFollowUps.map((f, idx) => {
-                  const isPending = f.status === "Pending";
-                  const isOverdue = isPending && f.dueDate < todayISO();
+              <div className="space-y-2.5">
+                {filteredComplaints.map((c) => {
+                  const linkedVisit = visits.find((v) => v.id === c.visitId);
                   return (
                     <div
-                      key={f.id}
-                      className={[
-                        "flex flex-wrap items-start gap-4 rounded-xl border p-4 transition-colors",
-                        isOverdue ? "border-destructive/30 bg-danger-soft/30" : isPending ? "border-warning/30 bg-warning-soft/30" : "border-border bg-secondary/30",
-                      ].join(" ")}
+                      key={c.id}
+                      className="p-3.5 rounded-xl border bg-secondary/30 flex items-start justify-between gap-3 hover:bg-secondary/50 transition-colors"
                     >
-                      {/* Timeline dot */}
-                      <div className="flex flex-col items-center pt-1">
-                        <div className={[
-                          "h-3 w-3 rounded-full ring-2 ring-offset-2",
-                          f.status === "Completed" ? "bg-success ring-success/30" :
-                          f.status === "Cancelled" ? "bg-muted-foreground ring-muted/30" :
-                          isOverdue ? "bg-destructive ring-destructive/30" :
-                          "bg-warning ring-warning/30",
-                        ].join(" ")} />
-                        {idx < pFollowUps.length - 1 && (
-                          <div className="mt-1 h-full min-h-[2rem] w-px bg-border" />
-                        )}
-                      </div>
-
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium text-sm">{formatDate(f.dueDate)}</span>
-                          <Badge
-                            variant="outline"
-                            className={
-                              f.status === "Completed" ? "border-success/30 bg-success-soft text-success text-xs" :
-                              f.status === "Cancelled" ? "bg-secondary text-muted-foreground text-xs" :
-                              isOverdue ? "border-destructive/30 bg-danger-soft text-destructive text-xs" :
-                              "border-warning/30 bg-warning-soft text-warning-foreground text-xs"
-                            }
-                          >
-                            {isOverdue && f.status === "Pending" ? "Overdue" : f.status}
-                          </Badge>
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-foreground">
+                            {formatComplaintDateTime(c.createdAt)}
+                          </span>
+                          {linkedVisit ? (
+                            <Badge variant="outline" className="text-[10px] bg-primary/5 text-primary border-primary/30">
+                              Visit: {formatDate(linkedVisit.date)} ({linkedVisit.type})
+                            </Badge>
+                          ) : (
+                            <Badge variant="secondary" className="text-[10px]">
+                              General Consultation
+                            </Badge>
+                          )}
                         </div>
-                        <p className="mt-1 text-sm text-muted-foreground">{f.reason}</p>
+                        <p className="text-sm text-foreground font-medium whitespace-pre-wrap">{c.complaint}</p>
                       </div>
 
-                      {canEdit && isPending && (
-                        <div className="flex gap-1.5">
+                      {isDoctor && (
+                        <div className="flex items-center gap-1 shrink-0">
                           <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8 rounded-lg px-3 text-xs"
-                            onClick={() => { setFollowUpStatus(f.id, "Completed"); toast.success("Marked as completed"); }}
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                            onClick={() => {
+                              setEditingComplaint(c);
+                              setEditText(c.complaint);
+                              setEditVisitId(c.visitId || "");
+                              const ist = parseISTDateTime(c.createdAt);
+                              setEditDate(ist.date);
+                              setEditTime(ist.time);
+                            }}
                           >
-                            ✓ Done
+                            <Pencil className="h-3.5 w-3.5" />
                           </Button>
                           <Button
-                            size="sm"
+                            size="icon"
                             variant="ghost"
-                            className="h-8 rounded-lg px-3 text-xs text-muted-foreground"
-                            onClick={() => { setFollowUpStatus(f.id, "Cancelled"); toast("Follow-up cancelled"); }}
+                            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                            onClick={() => setDeletingComplaint(c)}
                           >
-                            Cancel
+                            <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         </div>
                       )}
@@ -974,1139 +1097,1295 @@ function PatientProfile() {
               </div>
             )}
           </div>
-        </TabsContent>
 
-        {caseAccess !== "hidden" && (
-          <TabsContent value="case" className="mt-5">
-            <div className="card-soft p-5">
-              <Accordion type="multiple" defaultValue={["hpi"]} className="w-full">
-                {([
-                  ["hpi", "History of Present Illness", "presentIllness"],
-                  ["pmh", "Past Medical History", "pastHistory"],
-                  ["fh", "Family History", "familyHistory"],
-                  ["mentals", "Mental / Emotional Symptoms", "mentals"],
-                  ["pg", "Physical Generals", "physicalGenerals"],
-                ] as const).map(([key, title, field]) => (
-                  <AccordionItem key={key} value={key}>
-                    <AccordionTrigger className="text-sm font-semibold">{title}</AccordionTrigger>
-                    <AccordionContent>
-                      <Textarea
-                        rows={3}
-                        value={(ch[field as keyof CaseHistory] as string) ?? ""}
-                        onChange={(e) => setCh({ ...ch, [field]: e.target.value })}
-                        disabled={caseAccess !== "full"}
-                      />
-                    </AccordionContent>
-                  </AccordionItem>
-                ))}
-                <AccordionItem value="personal">
-                  <AccordionTrigger className="text-sm font-semibold">Personal History</AccordionTrigger>
-                  <AccordionContent className="grid gap-3 sm:grid-cols-3">
-                    {(["diet", "sleep", "thermal"] as const).map((f) => (
-                      <div key={f} className="space-y-2">
-                        <Label className="capitalize">{f === "thermal" ? "Thermal preference" : f}</Label>
-                        <Input value={ch[f]} onChange={(e) => setCh({ ...ch, [f]: e.target.value })} disabled={caseAccess !== "full"} />
-                      </div>
-                    ))}
-                  </AccordionContent>
-                </AccordionItem>
-                <AccordionItem value="modalities">
-                  <AccordionTrigger className="text-sm font-semibold">Modalities</AccordionTrigger>
-                  <AccordionContent className="grid gap-4 sm:grid-cols-2">
-                    <TagInput label="Better from" tags={ch.better} onChange={(t) => setCh({ ...ch, better: t })} />
-                    <TagInput label="Worse from" tags={ch.worse} onChange={(t) => setCh({ ...ch, worse: t })} />
-                  </AccordionContent>
-                </AccordionItem>
-              </Accordion>
-
-              {caseAccess === "full" && (
-                <div className="mt-5 flex flex-wrap gap-3">
-                  <Button
-                    className="rounded-xl"
-                    onClick={() => {
-                      saveCaseHistory(id, { ...ch, updatedOn: todayISO() });
-                      toast.success("Case history saved");
-                    }}
-                  >
-                    Save case history
-                  </Button>
-                  <Button variant="outline" className="rounded-xl" onClick={() => setNoteOpen(true)}>
-                    <Plus className="mr-2 h-4 w-4" /> Add new visit note
-                  </Button>
-                  {ch.updatedOn && <span className="self-center text-xs text-muted-foreground">Last updated {formatDate(ch.updatedOn)}</span>}
-                </div>
-              )}
-            </div>
-          </TabsContent>
-        )}
-
-        <TabsContent value="timeline" className="mt-5 space-y-4">
-          <div className="card-soft p-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b">
+          {/* Section B: Clinical Case History Form */}
+          <div className="card-soft p-5 border bg-card">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b">
               <div>
-                <h3 className="text-base font-semibold text-foreground">Clinical &amp; Billing Timeline</h3>
+                <h3 className="text-base font-bold text-foreground">
+                  Homeopathic Case History &amp; Modalities
+                </h3>
                 <p className="text-xs text-muted-foreground">
-                  Integrated chronological history of visits, prescriptions, and billing for {patient.name}
+                  Record systemic generals, constitution, family history, and modality triggers.
                 </p>
               </div>
 
-              {/* Timeline filter pills */}
-              <div className="flex flex-wrap items-center gap-1.5 bg-secondary/60 p-1 rounded-xl">
-                {[
-                  { key: "all", label: "All Activities", count: timelineGroups.length },
-                  { key: "visits", label: "Visits", count: pVisits.length },
-                  { key: "bills", label: "Bills", count: pBills.length },
-                  { key: "prescriptions", label: "Prescriptions", count: pPres.length },
-                ].map((f) => (
-                  <button
-                    key={f.key}
-                    type="button"
-                    onClick={() => setTimelineFilter(f.key as any)}
-                    className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
-                      timelineFilter === f.key
-                        ? "bg-background text-foreground shadow-xs"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    {f.label} ({f.count})
-                  </button>
-                ))}
-              </div>
+              {isDoctor && (
+                <Button
+                  size="sm"
+                  className="rounded-xl"
+                  onClick={() => {
+                    saveCaseHistory(patient.id, ch);
+                    toast.success("Case history saved successfully");
+                  }}
+                >
+                  Save Case History
+                </Button>
+              )}
             </div>
 
-            {filteredTimelineGroups.length === 0 ? (
-              <div className="py-12 text-center text-sm text-muted-foreground">
-                <Clock className="mx-auto h-8 w-8 text-muted-foreground/60 mb-2" />
-                <p>No activity recorded in this view.</p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2 sm:col-span-2">
+                <Label>Present Illness &amp; Onset</Label>
+                <Textarea
+                  value={ch.presentIllness}
+                  disabled={!isDoctor}
+                  onChange={(e) => setCh({ ...ch, presentIllness: e.target.value })}
+                  placeholder="Details of current onset, location, sensation, progression..."
+                  rows={3}
+                />
               </div>
-            ) : (
-              <ol className="relative border-l border-border pl-6 space-y-8 mt-5">
-                {filteredTimelineGroups.map((group) => {
-                  return (
-                    <li key={group.date} className="relative">
-                      {/* Timeline Dot */}
-                      <span className="absolute -left-[31px] mt-1.5 h-3.5 w-3.5 rounded-full border-2 border-background bg-primary ring-4 ring-primary/10" />
 
-                      {/* Date Badge */}
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="font-semibold text-sm text-foreground">
-                          {formatDate(group.date)}
-                        </span>
-                        {group.date === todayISO() && (
-                          <Badge className="bg-primary/10 text-primary hover:bg-primary/10 text-[10px] uppercase tracking-wider font-bold">
-                            Today
-                          </Badge>
-                        )}
-                      </div>
+              <div className="space-y-2">
+                <Label>Past Medical History</Label>
+                <Textarea
+                  value={ch.pastHistory}
+                  disabled={!isDoctor}
+                  onChange={(e) => setCh({ ...ch, pastHistory: e.target.value })}
+                  placeholder="Previous illnesses, surgeries, chronic complaints..."
+                  rows={3}
+                />
+              </div>
 
-                      <div className="space-y-3">
-                        {/* 1. VISITS on this date */}
-                        {group.visits.map((v) => (
-                          <div
-                            key={v.id}
-                            className="rounded-xl border border-border/70 bg-card p-4 shadow-xs space-y-2"
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex items-center gap-2">
-                                <Badge
-                                  variant="outline"
-                                  className={
-                                    v.type === "New"
-                                      ? "bg-info-soft text-info border-info/30"
-                                      : "bg-primary-soft text-primary-soft-foreground border-primary/20"
-                                  }
-                                >
-                                  {v.type} Visit
-                                </Badge>
-                                {v.complaint && (
-                                  <span className="text-sm font-semibold text-foreground">
-                                    {v.complaint}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            {v.notes && (
-                              <p className="text-sm text-muted-foreground bg-secondary/40 p-2.5 rounded-lg border border-border/40">
-                                {v.notes}
-                              </p>
-                            )}
-                          </div>
-                        ))}
+              <div className="space-y-2">
+                <Label>Family Medical History</Label>
+                <Textarea
+                  value={ch.familyHistory}
+                  disabled={!isDoctor}
+                  onChange={(e) => setCh({ ...ch, familyHistory: e.target.value })}
+                  placeholder="Hereditary complaints (Diabetes, Asthma, Cancer, Hypertension)..."
+                  rows={3}
+                />
+              </div>
 
-                        {/* 2. PRESCRIPTIONS on this date */}
-                        {group.prescriptions.map((rx) => (
-                          <div
-                            key={rx.id}
-                            className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4 space-y-3"
-                          >
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex items-center gap-2">
-                                <Pill className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-                                <span className="text-sm font-semibold text-foreground">
-                                  Prescription ({rx.items.length} medicine{rx.items.length === 1 ? "" : "s"})
-                                </span>
-                                {rx.isRefill && <Badge variant="secondary" className="text-xs">Refill</Badge>}
-                                {rx.followUpDate && (
-                                  <Badge variant="outline" className="text-xs">
-                                    Next Review: {formatDate(rx.followUpDate)}
-                                  </Badge>
-                                )}
-                              </div>
-                              <div className="flex items-center gap-1.5">
-                                <WhatsAppButton
-                                  size="sm"
-                                  label="WhatsApp"
-                                  loading={sharingRxId === rx.id}
-                                  onClick={() => handleSendPrescriptionWhatsApp(rx)}
-                                />
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="h-8 rounded-lg px-2.5 text-xs shadow-xs"
-                                  onClick={() => setPrintingRx(rx)}
-                                >
-                                  <Printer className="mr-1.5 h-3.5 w-3.5 text-emerald-600" /> Print
-                                </Button>
-                              </div>
-                            </div>
-                            <div className="flex flex-wrap gap-1.5">
-                              {rx.items.map((i) => (
-                                <span
-                                  key={i.id}
-                                  className="inline-flex items-center gap-1 rounded-md bg-background px-2.5 py-1 text-xs border font-medium text-foreground"
-                                >
-                                  <strong>{i.medicineName}</strong>
-                                  <span className="text-muted-foreground">{i.potency}</span>
-                                  <span className="text-[11px] text-muted-foreground/80">· {i.dosage}</span>
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
+              <div className="space-y-2">
+                <TagInput
+                  label="Modalities: < Better / Amelioration"
+                  tags={ch.better}
+                  onChange={(t) => setCh({ ...ch, better: t })}
+                />
+              </div>
 
-                        {/* 3. BILLS on this date */}
-                        {group.bills.map((b) => {
-                          const total = billTotal(b);
-                          const balance = total - b.amountReceived;
-                          return (
-                            <div
-                              key={b.id}
-                              className={`rounded-xl border p-4 space-y-3 transition-all ${
-                                b.status === "Paid"
-                                  ? "border-emerald-500/25 bg-emerald-500/5"
-                                  : b.status === "Partial"
-                                    ? "border-amber-500/25 bg-amber-500/5"
-                                    : "border-rose-500/25 bg-rose-500/5"
-                              }`}
-                            >
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <div className="flex items-center gap-2">
-                                  <Receipt className="h-4 w-4 text-emerald-600" />
-                                  <span className="font-mono font-bold text-sm text-foreground">
-                                    {b.invoiceNo}
-                                  </span>
-                                  <Badge
-                                    variant="outline"
-                                    className={
-                                      b.status === "Paid"
-                                        ? "bg-success-soft text-success border-success/30"
-                                        : b.status === "Partial"
-                                          ? "bg-warning-soft text-warning-foreground border-warning/30"
-                                          : "bg-danger-soft text-destructive border-destructive/30"
-                                    }
-                                  >
-                                    {b.status}
-                                  </Badge>
-                                  {b.paymentMode && (
-                                    <Badge variant="secondary" className="text-xs">
-                                      {b.paymentMode}
-                                    </Badge>
-                                  )}
-                                  {b.prescriptionId ? (
-                                    <Badge variant="outline" className="text-[11px] text-muted-foreground">
-                                      Prescription Bill
-                                    </Badge>
-                                  ) : (
-                                    <Badge variant="outline" className="text-[11px] text-muted-foreground">
-                                      Consultation Bill
-                                    </Badge>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <span className="font-bold text-sm text-foreground">
-                                    {inr(total)}
-                                  </span>
-                                  {b.status !== "Paid" && (
-                                    <span className="text-xs font-semibold text-destructive">
-                                      (Due: {inr(balance)})
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
+              <div className="space-y-2">
+                <TagInput
+                  label="Modalities: > Worse / Aggravation"
+                  tags={ch.worse}
+                  onChange={(t) => setCh({ ...ch, worse: t })}
+                />
+              </div>
 
-                              {/* Items list */}
-                              <div className="rounded-lg bg-background/80 p-2.5 border text-xs divide-y divide-border/60">
-                                {b.items.map((item, idx) => (
-                                  <div key={idx} className="flex justify-between py-1 first:pt-0 last:pb-0">
-                                    <span className="font-medium text-foreground">
-                                      {item.label} <span className="text-muted-foreground">× {item.qty}</span>
-                                    </span>
-                                    <span className="font-mono text-muted-foreground">
-                                      {inr(item.qty * item.rate)}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
+              <div className="space-y-2">
+                <Label>Diet &amp; Cravings / Aversions</Label>
+                <Input
+                  value={ch.diet}
+                  disabled={!isDoctor}
+                  onChange={(e) => setCh({ ...ch, diet: e.target.value })}
+                  placeholder="Appetite, thirst, desires (sweet, spicy, salty), aversions..."
+                />
+              </div>
 
-                              {/* Bill Actions */}
-                              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-border/50">
-                                <div className="text-xs text-muted-foreground">
-                                  Paid: <strong className="text-foreground">{inr(b.amountReceived)}</strong>
-                                  {b.status !== "Paid" && (
-                                    <> · Balance: <strong className="text-destructive">{inr(balance)}</strong></>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-1.5">
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-8 rounded-lg px-2.5 text-xs shadow-xs"
-                                    asChild
-                                  >
-                                    <Link to="/billing/$id" params={{ id: b.id }}>
-                                      <Receipt className="mr-1.5 h-3.5 w-3.5 text-primary" /> Open Bill
-                                    </Link>
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="h-8 rounded-lg px-2.5 text-xs shadow-xs"
-                                    onClick={() => setPrintingBill(b)}
-                                  >
-                                    <Printer className="mr-1.5 h-3.5 w-3.5 text-emerald-600" /> Print
-                                  </Button>
-                                  <WhatsAppButton
-                                    size="sm"
-                                    label="WhatsApp"
-                                    loading={sharingBillId === b.id}
-                                    onClick={(e) => {
-                                      e.preventDefault();
-                                      e.stopPropagation();
-                                      handleSendBillWhatsApp(b);
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ol>
-            )}
+              <div className="space-y-2">
+                <Label>Sleep &amp; Dreams</Label>
+                <Input
+                  value={ch.sleep}
+                  disabled={!isDoctor}
+                  onChange={(e) => setCh({ ...ch, sleep: e.target.value })}
+                  placeholder="Sleep patterns, position, insomnia, recurring dreams..."
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Thermal Reaction</Label>
+                <Input
+                  value={ch.thermal}
+                  disabled={!isDoctor}
+                  onChange={(e) => setCh({ ...ch, thermal: e.target.value })}
+                  placeholder="Hot / Chilly / Ambithermal, reaction to weather/baths..."
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Mental &amp; Emotional Generals</Label>
+                <Input
+                  value={ch.mentals}
+                  disabled={!isDoctor}
+                  onChange={(e) => setCh({ ...ch, mentals: e.target.value })}
+                  placeholder="Temperament, anxieties, fears, irritability, mood..."
+                />
+              </div>
+
+              <div className="space-y-2 sm:col-span-2">
+                <Label>Physical Generals &amp; Clinical Notes</Label>
+                <Textarea
+                  value={ch.physicalGenerals}
+                  disabled={!isDoctor}
+                  onChange={(e) => setCh({ ...ch, physicalGenerals: e.target.value })}
+                  placeholder="Perspiration, tongue, discharges, general physical constitution..."
+                  rows={3}
+                />
+              </div>
+            </div>
           </div>
         </TabsContent>
 
+        {/* ═════════════════════════════════════════════════════════════
+            TAB 3: VISITS (Chronological Visit History & Medical Dossier)
+        ═════════════════════════════════════════════════════════════ */}
+        <TabsContent value="visits" className="mt-4 space-y-4">
+          {/* Header Bar with Toggle & Action */}
+          <div className="card-soft p-4 flex flex-wrap items-center justify-between gap-3 border bg-card">
+            <div>
+              <h2 className="text-base font-bold text-foreground flex items-center gap-2">
+                <Stethoscope className="h-5 w-5 text-emerald-600" /> Visit History &amp; Consultations
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                Chronological series of doctor visits, clinical findings, prescriptions, and billing.
+              </p>
+            </div>
 
-        {caseAccess !== "hidden" && (
-          <TabsContent value="rx" className="mt-5 space-y-3">
-            {pPres.length === 0 && <p className="card-soft p-10 text-center text-sm text-muted-foreground">No prescriptions yet.</p>}
-            {pPres.map((rx) => (
-              <div key={rx.id} className="card-soft p-5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-semibold">{formatDate(rx.date)}</span>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {rx.isRefill && <Badge variant="secondary">Refill</Badge>}
-                    {rx.followUpDate && <Badge variant="outline">Follow-up {formatDate(rx.followUpDate)}</Badge>}
-                    <WhatsAppButton
-                      size="sm"
-                      label="WhatsApp PDF"
-                      loading={sharingRxId === rx.id}
-                      onClick={() => handleSendPrescriptionWhatsApp(rx)}
-                    />
-                    {canPrescribe && (
+            <div className="flex items-center gap-2">
+              <div className="flex items-center rounded-xl bg-secondary p-1 border">
+                <button
+                  type="button"
+                  className={cn(
+                    "px-3 py-1 text-xs font-semibold rounded-lg transition-colors",
+                    visitsViewMode === "timeline" ? "bg-card text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
+                  )}
+                  onClick={() => setVisitsViewMode("timeline")}
+                >
+                  Timeline Cards
+                </button>
+                <button
+                  type="button"
+                  className={cn(
+                    "px-3 py-1 text-xs font-semibold rounded-lg transition-colors",
+                    visitsViewMode === "table" ? "bg-card text-foreground shadow-xs" : "text-muted-foreground hover:text-foreground"
+                  )}
+                  onClick={() => setVisitsViewMode("table")}
+                >
+                  Summary Table
+                </button>
+              </div>
+
+              {isDoctor && (
+                <Button
+                  className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-xs text-xs"
+                  onClick={() => handleOpenNewVisit()}
+                >
+                  <Plus className="mr-1.5 h-3.5 w-3.5" /> + New Visit
+                </Button>
+              )}
+            </div>
+          </div>
+
+          {/* Visits Content */}
+          {pVisits.length === 0 ? (
+            <div className="card-soft p-12 text-center border bg-card">
+              <Stethoscope className="h-12 w-12 text-muted-foreground mx-auto stroke-1" />
+              <h3 className="mt-3 text-base font-bold text-foreground">No Visits Recorded Yet</h3>
+              <p className="text-xs text-muted-foreground max-w-md mx-auto mt-1">
+                This patient does not have any consultation visits in the system yet. Start their treatment journey by recording their first consultation visit.
+              </p>
+              {isDoctor && (
+                <Button
+                  className="mt-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+                  onClick={() => handleOpenNewVisit()}
+                >
+                  <Plus className="mr-1.5 h-4 w-4" /> Record First Visit
+                </Button>
+              )}
+            </div>
+          ) : visitsViewMode === "table" ? (
+            /* ──── Summary Table View ──── */
+            <div className="card-soft overflow-hidden border bg-card">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-secondary/60 text-muted-foreground border-b font-semibold">
+                    <tr>
+                      <th className="p-3 w-16 text-center">Visit</th>
+                      <th className="p-3 w-28">Date</th>
+                      <th className="p-3 w-28">Type</th>
+                      <th className="p-3">Summary / Complaint</th>
+                      <th className="p-3">Prescription</th>
+                      <th className="p-3 w-28">Bill</th>
+                      <th className="p-3 w-28">Follow-up</th>
+                      <th className="p-3 w-24 text-right">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/60">
+                    {pVisits.map((v, idx) => {
+                      const visitNumber = pVisits.length - idx;
+                      const linkedRx = pPres.find((p) => p.visitId === v.id || p.date === v.date);
+                      const linkedBill = pBills.find((b) => (linkedRx && b.prescriptionId === linkedRx.id) || b.date === v.date);
+                      const linkedFollowUp = pFollowUps.find((f) => f.dueDate >= v.date);
+
+                      return (
+                        <tr key={v.id} className="hover:bg-secondary/30 transition-colors">
+                          <td className="p-3 text-center font-bold text-foreground">
+                            #{visitNumber}
+                          </td>
+                          <td className="p-3 font-medium whitespace-nowrap">
+                            {formatDate(v.date)}
+                          </td>
+                          <td className="p-3">
+                            <Badge variant={v.type === "New" ? "default" : "outline"} className="text-[10px]">
+                              {v.type}
+                            </Badge>
+                          </td>
+                          <td className="p-3">
+                            <p className="font-semibold text-foreground truncate max-w-xs">{v.complaint || "Routine Consultation"}</p>
+                            {v.notes && <p className="text-[11px] text-muted-foreground truncate max-w-xs">{v.notes}</p>}
+                          </td>
+                          <td className="p-3">
+                            {linkedRx ? (
+                              <div className="space-y-0.5">
+                                <span className="font-medium text-foreground">{linkedRx.items.length} Medicines</span>
+                                <p className="text-[10px] text-muted-foreground truncate max-w-[200px]">
+                                  {linkedRx.items.map((i) => i.medicineName).join(", ")}
+                                </p>
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground italic">—</span>
+                            )}
+                          </td>
+                          <td className="p-3">
+                            {linkedBill ? (
+                              <div>
+                                <span className="font-bold text-foreground">{inr(billTotal(linkedBill))}</span>
+                                <Badge
+                                  variant={linkedBill.status === "Paid" ? "default" : "destructive"}
+                                  className="ml-1 text-[9px] px-1 py-0"
+                                >
+                                  {linkedBill.status}
+                                </Badge>
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground italic">—</span>
+                            )}
+                          </td>
+                          <td className="p-3">
+                            {linkedFollowUp ? (
+                              <span className="font-medium text-muted-foreground whitespace-nowrap">
+                                {formatDate(linkedFollowUp.dueDate)}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground italic">—</span>
+                            )}
+                          </td>
+                          <td className="p-3 text-right">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs rounded-lg"
+                              onClick={() => setFullVisitModal(v)}
+                            >
+                              View
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            /* ──── Timeline Expandable Cards View ──── */
+            <div className="space-y-4">
+              {pVisits.map((v, idx) => {
+                const visitNumber = pVisits.length - idx;
+                const linkedRx = pPres.find((p) => p.visitId === v.id || p.date === v.date);
+                const linkedBill = pBills.find((b) => (linkedRx && b.prescriptionId === linkedRx.id) || b.date === v.date);
+                const linkedFollowUp = pFollowUps.find((f) => f.dueDate >= v.date);
+
+                return (
+                  <div
+                    key={v.id}
+                    className="card-soft border rounded-2xl overflow-hidden shadow-xs bg-card hover:border-primary/40 transition-all"
+                  >
+                    {/* Visit Header */}
+                    <div className="bg-secondary/40 p-4 border-b flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        <div className="h-10 w-10 rounded-xl bg-emerald-600/10 text-emerald-700 dark:text-emerald-300 flex items-center justify-center font-bold font-display text-sm">
+                          #{visitNumber}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <h3 className="text-base font-bold text-foreground">
+                              Visit #{visitNumber} &bull; {formatDate(v.date)}
+                            </h3>
+                            <Badge variant={v.type === "New" ? "default" : "outline"} className="text-[10px]">
+                              {v.type === "New" ? "New Consultation" : "Follow-up Visit"}
+                            </Badge>
+                            <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 border-emerald-500/30">
+                              Completed
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Recorded at Dr. Ayus Homoeopathy Hospital
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {linkedRx && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 text-xs rounded-xl"
+                            onClick={() => handleQuickReuse(linkedRx)}
+                          >
+                            <RefreshCw className="mr-1.5 h-3.5 w-3.5 text-primary" /> Use Again
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="h-8 text-xs rounded-xl font-medium"
+                          onClick={() => setFullVisitModal(v)}
+                        >
+                          <Eye className="mr-1.5 h-3.5 w-3.5" /> View Full Visit
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Visit Body */}
+                    <div className="p-4 space-y-4">
+                      {/* Clinical Complaint & Notes */}
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div className="p-3 rounded-xl bg-secondary/30 border">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block mb-1">
+                            Chief Complaint
+                          </span>
+                          <p className="text-sm font-semibold text-foreground">
+                            {v.complaint || "Routine Consultation"}
+                          </p>
+                        </div>
+                        <div className="p-3 rounded-xl bg-secondary/30 border">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground block mb-1">
+                            Case Notes / Observations
+                          </span>
+                          <p className="text-xs text-muted-foreground whitespace-pre-wrap">
+                            {v.notes || "No clinical case notes recorded for this visit."}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Linked Prescription Section */}
+                      {linkedRx && (
+                        <div className="p-3.5 rounded-xl border border-emerald-500/20 bg-emerald-50/30 dark:bg-emerald-950/10 space-y-2.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
+                              <Pill className="h-4 w-4" /> Prescribed Medicines ({linkedRx.items.length})
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs rounded-lg border-emerald-500/30"
+                                onClick={() => setPrintingRx(linkedRx)}
+                              >
+                                <Printer className="mr-1 h-3 w-3" /> Print Rx
+                              </Button>
+                              <WhatsAppButton
+                                label="WhatsApp PDF"
+                                isPdf={true}
+                                loading={sharingRxId === linkedRx.id}
+                                onClick={() => handleSendPrescriptionWhatsApp(linkedRx)}
+                              />
+                            </div>
+                          </div>
+
+                          <div className="divide-y divide-emerald-500/10 text-xs">
+                            {linkedRx.items.map((it, i) => (
+                              <div key={i} className="py-1.5 flex items-center justify-between">
+                                <span className="font-medium text-foreground">
+                                  &bull; {it.medicineName} <strong className="text-primary font-mono font-semibold">({it.potency})</strong>
+                                  <span className="text-muted-foreground ml-1.5">· {it.dosage} · {it.frequency} · {it.instructions}</span>
+                                </span>
+                                <span className="text-muted-foreground font-mono text-[11px]">{it.duration}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Linked Bill & Follow-up Row */}
+                      <div className="grid gap-3 sm:grid-cols-2 pt-1 border-t">
+                        {/* Linked Bill */}
+                        {linkedBill ? (
+                          <div className="flex items-center justify-between p-2.5 rounded-xl bg-secondary/20 border text-xs">
+                            <div>
+                              <span className="text-[10px] text-muted-foreground uppercase tracking-wider block">
+                                Invoiced Amount
+                              </span>
+                              <span className="font-bold text-sm text-foreground">
+                                {inr(billTotal(linkedBill))}
+                              </span>
+                              <Badge
+                                variant={linkedBill.status === "Paid" ? "default" : "destructive"}
+                                className="ml-2 text-[9px] px-1.5 py-0"
+                              >
+                                {linkedBill.status}
+                              </Badge>
+                              {linkedBill.paymentMode && (
+                                <span className="ml-1 text-[10px] text-muted-foreground">({linkedBill.paymentMode})</span>
+                              )}
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs"
+                              onClick={() => setPrintingBill(linkedBill)}
+                            >
+                              <Printer className="mr-1 h-3 w-3" /> Print Bill
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="p-2.5 rounded-xl bg-secondary/10 border text-xs text-muted-foreground flex items-center">
+                            No billing invoice recorded for this visit.
+                          </div>
+                        )}
+
+                        {/* Linked Follow-up */}
+                        {linkedFollowUp ? (
+                          <div className="flex items-center justify-between p-2.5 rounded-xl bg-secondary/20 border text-xs">
+                            <div>
+                              <span className="text-[10px] text-muted-foreground uppercase tracking-wider block">
+                                Follow-up Reminder
+                              </span>
+                              <span className="font-semibold text-foreground">
+                                {formatDate(linkedFollowUp.dueDate)}
+                              </span>
+                              <span className="ml-1 text-[11px] text-muted-foreground truncate">
+                                &bull; {linkedFollowUp.reason || "Review check"}
+                              </span>
+                            </div>
+                            <Badge variant="outline" className="text-[10px]">
+                              {linkedFollowUp.status}
+                            </Badge>
+                          </div>
+                        ) : (
+                          <div className="p-2.5 rounded-xl bg-secondary/10 border text-xs text-muted-foreground flex items-center">
+                            No follow-up reminder set.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ═════════════════════════════════════════════════════════════
+            TAB 4: PRESCRIPTIONS (Complete Rx Record & Quick Reuse)
+        ═════════════════════════════════════════════════════════════ */}
+        <TabsContent value="prescriptions" className="mt-4 space-y-4">
+          <div className="card-soft p-4 flex items-center justify-between border bg-card">
+            <div>
+              <h2 className="text-base font-bold text-foreground flex items-center gap-2">
+                <Pill className="h-5 w-5 text-emerald-600" /> Patient Prescriptions ({pPres.length})
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                All prescription records, medicine items, dosage instructions, and A4 printouts.
+              </p>
+            </div>
+
+            {canPrescribe && (
+              <Button asChild className="rounded-xl font-semibold">
+                <Link to="/prescriptions/new" search={{ patientId: patient.id }}>
+                  <Plus className="mr-1.5 h-4 w-4" /> New Prescription
+                </Link>
+              </Button>
+            )}
+          </div>
+
+          {pPres.length === 0 ? (
+            <div className="card-soft p-12 text-center border bg-card">
+              <Pill className="h-12 w-12 text-muted-foreground mx-auto stroke-1" />
+              <h3 className="mt-3 text-base font-bold text-foreground">No Prescriptions Yet</h3>
+              <p className="text-xs text-muted-foreground max-w-sm mx-auto mt-1">
+                This patient does not have any prescriptions saved.
+              </p>
+              {canPrescribe && (
+                <Button asChild className="mt-4 rounded-xl">
+                  <Link to="/prescriptions/new" search={{ patientId: patient.id }}>
+                    <Plus className="mr-1.5 h-4 w-4" /> Create Prescription
+                  </Link>
+                </Button>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {pPres.map((rx, idx) => {
+                const parsedNotes = parseClinicalNotes(rx.notes);
+                const linkedVisit = visits.find((v) => v.id === rx.visitId);
+
+                return (
+                  <div key={rx.id} className="card-soft border rounded-2xl p-4 bg-card space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2 pb-2.5 border-b">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-sm font-bold text-foreground">
+                            Prescription on {formatDate(rx.date)}
+                          </h4>
+                          {rx.isRefill && <Badge variant="secondary" className="text-[10px]">Refill</Badge>}
+                          {linkedVisit && (
+                            <Badge variant="outline" className="text-[10px]">
+                              Visit: {linkedVisit.type}
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {rx.items.length} prescribed item{rx.items.length !== 1 ? "s" : ""}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {/* Quick Reuse / Use Again */}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs rounded-xl"
+                          onClick={() => handleQuickReuse(rx)}
+                        >
+                          <RefreshCw className="mr-1.5 h-3.5 w-3.5 text-primary" /> Use Again
+                        </Button>
+
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs rounded-xl"
+                          onClick={() => setPrintingRx(rx)}
+                        >
+                          <Printer className="mr-1.5 h-3.5 w-3.5 text-emerald-600" /> Print
+                        </Button>
+
+                        <WhatsAppButton
+                          label="Send PDF"
+                          isPdf={true}
+                          loading={sharingRxId === rx.id}
+                          onClick={() => handleSendPrescriptionWhatsApp(rx)}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Medicines Table */}
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-secondary/40 text-muted-foreground border-b text-[11px]">
+                          <tr>
+                            <th className="p-2">Medicine</th>
+                            <th className="p-2">Potency</th>
+                            <th className="p-2">Form</th>
+                            <th className="p-2">Dosage</th>
+                            <th className="p-2">Frequency</th>
+                            <th className="p-2">Duration</th>
+                            <th className="p-2">Instructions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border/60">
+                          {rx.items.map((it, i) => (
+                            <tr key={i} className="hover:bg-secondary/20">
+                              <td className="p-2 font-semibold text-foreground">{it.medicineName}</td>
+                              <td className="p-2 font-mono text-primary font-medium">{it.potency}</td>
+                              <td className="p-2 text-muted-foreground">{it.formType || "Bottle"}</td>
+                              <td className="p-2">{it.dosage}</td>
+                              <td className="p-2">{it.frequency}</td>
+                              <td className="p-2 font-mono">{it.duration}</td>
+                              <td className="p-2 text-muted-foreground">{it.instructions}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Diagnosis / Clinical Instructions if any */}
+                    {(parsedNotes.diagnosis || parsedNotes.specialInstructions) && (
+                      <div className="p-2.5 rounded-xl bg-secondary/30 border text-xs text-muted-foreground space-y-1">
+                        {parsedNotes.diagnosis && (
+                          <p><strong className="text-foreground">Clinical Diagnosis:</strong> {parsedNotes.diagnosis}</p>
+                        )}
+                        {parsedNotes.specialInstructions && (
+                          <p><strong className="text-foreground">Special Instructions:</strong> {parsedNotes.specialInstructions}</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
+
+        {/* ═════════════════════════════════════════════════════════════
+            TAB 5: BILLS (Financial Invoices & Payment Ledger)
+        ═════════════════════════════════════════════════════════════ */}
+        {canManageBilling && (
+          <TabsContent value="bills" className="mt-4 space-y-4">
+            <div className="card-soft p-4 flex flex-wrap items-center justify-between gap-3 border bg-card">
+              <div>
+                <h2 className="text-base font-bold text-foreground flex items-center gap-2">
+                  <Receipt className="h-5 w-5 text-emerald-600" /> Patient Invoices &amp; Bills ({pBills.length})
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  Official hospital tax invoices, receipts, itemised charges, and payment modes.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Select
+                  value={billsTabStatusFilter}
+                  onValueChange={(v) => setBillsTabStatusFilter(v as typeof billsTabStatusFilter)}
+                >
+                  <SelectTrigger className="w-28 h-8 text-xs rounded-xl">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Status</SelectItem>
+                    <SelectItem value="Paid">Paid</SelectItem>
+                    <SelectItem value="Pending">Pending</SelectItem>
+                    <SelectItem value="Partial">Partial</SelectItem>
+                  </SelectContent>
+                </Select>
+
+                <Button
+                  size="sm"
+                  className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+                  onClick={() => {
+                    setBillDate(todayISO());
+                    setBillFee(settings.consultationFee ?? 300);
+                    setBillDialogOpen(true);
+                  }}
+                >
+                  <Plus className="mr-1.5 h-3.5 w-3.5" /> + New Bill
+                </Button>
+              </div>
+            </div>
+
+            {pBills.length === 0 ? (
+              <div className="card-soft p-12 text-center border bg-card">
+                <Receipt className="h-12 w-12 text-muted-foreground mx-auto stroke-1" />
+                <h3 className="mt-3 text-base font-bold text-foreground">No Bills Generated Yet</h3>
+                <p className="text-xs text-muted-foreground max-w-sm mx-auto mt-1">
+                  Create a manual bill or invoice for consultation and medicines.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {pBills
+                  .filter((b) => (billsTabStatusFilter === "all" ? true : b.status === billsTabStatusFilter))
+                  .map((b) => {
+                    const total = billTotal(b);
+                    const bal = Math.max(0, total - (b.amountReceived || 0));
+
+                    return (
+                      <div key={b.id} className="card-soft border rounded-2xl p-4 bg-card space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono font-bold text-foreground text-sm">{b.invoiceNo}</span>
+                              <Badge
+                                variant={b.status === "Paid" ? "default" : b.status === "Partial" ? "secondary" : "destructive"}
+                                className="text-[10px]"
+                              >
+                                {b.status}
+                              </Badge>
+                              {b.paymentMode && (
+                                <Badge variant="outline" className="text-[10px]">
+                                  {b.paymentMode}
+                                </Badge>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              Date: {formatDate(b.date)} &bull; {b.items.length} bill item(s)
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {b.status !== "Paid" && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-8 text-xs rounded-xl border-emerald-500/30 text-emerald-700 dark:text-emerald-300"
+                                onClick={() => {
+                                  updateBill(b.id, {
+                                    status: "Paid",
+                                    amountReceived: total,
+                                    paymentMode: b.paymentMode || "Cash",
+                                  });
+                                  toast.success(`Bill ${b.invoiceNo} marked as Paid!`);
+                                }}
+                              >
+                                <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Mark Paid
+                              </Button>
+                            )}
+
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-8 text-xs rounded-xl"
+                              onClick={() => setPrintingBill(b)}
+                            >
+                              <Printer className="mr-1.5 h-3.5 w-3.5 text-emerald-600" /> Print
+                            </Button>
+
+                            <WhatsAppButton
+                              label="Send PDF"
+                              isPdf={true}
+                              loading={sharingBillId === b.id}
+                              onClick={() => handleSendBillWhatsApp(b)}
+                            />
+
+                            <Button asChild size="sm" variant="secondary" className="h-8 text-xs rounded-xl">
+                              <Link to="/billing/$id" params={{ id: b.id }}>
+                                Open <ExternalLink className="ml-1 h-3 w-3" />
+                              </Link>
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* Line Items */}
+                        <div className="divide-y text-xs">
+                          {b.items.map((it, i) => (
+                            <div key={i} className="py-1.5 flex items-center justify-between">
+                              <span className="text-foreground">
+                                {it.label} <span className="text-muted-foreground font-mono">(&times;{it.qty})</span>
+                              </span>
+                              <span className="font-mono font-medium text-foreground">{inr(it.qty * it.rate)}</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Footer Totals */}
+                        <div className="pt-2 border-t flex items-center justify-between text-xs">
+                          <span className="text-muted-foreground">
+                            Received: <strong className="text-foreground">{inr(b.amountReceived || 0)}</strong>
+                            {bal > 0 && <span className="text-destructive ml-2 font-bold font-mono">Due: {inr(bal)}</span>}
+                          </span>
+                          <span className="font-bold text-sm text-foreground">
+                            Total: <strong className="font-mono text-base">{inr(total)}</strong>
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+          </TabsContent>
+        )}
+
+        {/* ═════════════════════════════════════════════════════════════
+            TAB 6: FOLLOW-UPS (Appointments & Reminders)
+        ═════════════════════════════════════════════════════════════ */}
+        <TabsContent value="followups" className="mt-4 space-y-4">
+          <div className="card-soft p-4 flex items-center justify-between border bg-card">
+            <div>
+              <h2 className="text-base font-bold text-foreground flex items-center gap-2">
+                <CalendarClock className="h-5 w-5 text-primary" /> Follow-Up Appointments ({pFollowUps.length})
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                Scheduled consultation reviews, medicine refilling reminders, and patient checkups.
+              </p>
+            </div>
+
+            <Button
+              size="sm"
+              className="rounded-xl font-semibold"
+              onClick={() => {
+                setFollowUpDate("");
+                setFollowUpReason("");
+                setFollowUpOpen(true);
+              }}
+            >
+              <Plus className="mr-1.5 h-3.5 w-3.5" /> Schedule Follow-up
+            </Button>
+          </div>
+
+          {pFollowUps.length === 0 ? (
+            <div className="card-soft p-12 text-center border bg-card">
+              <CalendarClock className="h-12 w-12 text-muted-foreground mx-auto stroke-1" />
+              <h3 className="mt-3 text-base font-bold text-foreground">No Follow-ups Scheduled</h3>
+              <p className="text-xs text-muted-foreground max-w-sm mx-auto mt-1">
+                Schedule a follow-up review for this patient to ensure continuity of homeopathic treatment.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {pFollowUps.map((f) => (
+                <div key={f.id} className="card-soft border rounded-2xl p-4 bg-card flex items-center justify-between gap-3">
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-foreground">
+                        {formatDate(f.dueDate)}
+                      </span>
+                      <Badge
+                        variant={f.status === "Pending" ? "default" : f.status === "Completed" ? "secondary" : "outline"}
+                        className="text-[10px]"
+                      >
+                        {f.status}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground">{f.reason || "General review"}</p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {f.status === "Pending" && (
                       <Button
                         size="sm"
                         variant="outline"
-                        className="h-8 rounded-lg px-2.5 text-xs shadow-sm hover:border-primary/40 hover:text-primary"
-                        onClick={() => navigate({ to: "/prescriptions/new", search: { patientId: patient.id, edit: rx.id } })}
+                        className="h-8 text-xs rounded-xl"
+                        onClick={() => {
+                          setFollowUpStatus(f.id, "Completed");
+                          toast.success("Follow-up marked as Completed");
+                        }}
                       >
-                        <Pencil className="mr-1.5 h-3.5 w-3.5 text-primary" /> Edit
+                        <Check className="mr-1 h-3.5 w-3.5 text-emerald-600" /> Mark Done
                       </Button>
                     )}
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-8 rounded-lg px-2.5 text-xs shadow-sm"
-                      onClick={() => setPrintingRx(rx)}
-                    >
-                      <Printer className="mr-1.5 h-3.5 w-3.5 text-emerald-600" /> Print
-                    </Button>
                   </div>
                 </div>
-                <div className="mt-3 overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="text-left text-xs uppercase tracking-wider text-muted-foreground">
-                      <tr><th className="py-1.5">Medicine</th><th>Potency</th><th>Dosage</th><th>Frequency</th><th>Duration</th></tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {rx.items.map((i) => (
-                        <tr key={i.id}>
-                          <td className="py-2 font-medium">{i.medicineName}</td>
-                          <td>{i.potency}</td>
-                          <td>{i.dosage}</td>
-                          <td>{i.frequency}</td>
-                          <td>{i.duration}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ))}
-          </TabsContent>
-        )}
-
-        <TabsContent value="bills" className="mt-5 space-y-4">
-          {/* Patient Billing Summary Cards */}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="card-soft p-4 border-l-4 border-l-primary">
-              <p className="text-xs uppercase font-semibold tracking-wider text-muted-foreground">Total Invoiced</p>
-              <p className="text-2xl font-bold mt-1 text-foreground">
-                {inr(pBills.reduce((s, b) => s + billTotal(b), 0))}
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">{pBills.length} total invoice{pBills.length === 1 ? "" : "s"}</p>
-            </div>
-            <div className="card-soft p-4 border-l-4 border-l-success">
-              <p className="text-xs uppercase font-semibold tracking-wider text-muted-foreground">Total Paid</p>
-              <p className="text-2xl font-bold mt-1 text-success">
-                {inr(pBills.reduce((s, b) => s + b.amountReceived, 0))}
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {pBills.filter((b) => b.status === "Paid").length} settled
-              </p>
-            </div>
-            <div className={`card-soft p-4 border-l-4 ${pBills.reduce((s, b) => s + (billTotal(b) - b.amountReceived), 0) > 0 ? "border-l-destructive bg-destructive/5" : "border-l-muted"}`}>
-              <p className="text-xs uppercase font-semibold tracking-wider text-muted-foreground">Outstanding Balance</p>
-              <p className={`text-2xl font-bold mt-1 ${pBills.reduce((s, b) => s + (billTotal(b) - b.amountReceived), 0) > 0 ? "text-destructive" : "text-muted-foreground"}`}>
-                {inr(pBills.reduce((s, b) => s + (billTotal(b) - b.amountReceived), 0))}
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {pBills.filter((b) => b.status !== "Paid").length} pending payment
-              </p>
-            </div>
-            <div className="card-soft p-4 flex flex-col justify-between">
-              <div>
-                <p className="text-xs uppercase font-semibold tracking-wider text-muted-foreground">Billing Action</p>
-                <p className="text-xs text-muted-foreground mt-0.5">Bill consultation or medicines</p>
-              </div>
-              <Button
-                onClick={() => {
-                  setBillDate(todayISO());
-                  setBillFee(settings.consultationFee ?? 300);
-                  setBillDialogOpen(true);
-                }}
-                className="mt-2 w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs"
-              >
-                <Plus className="mr-1.5 h-4 w-4" /> New Bill
-              </Button>
-            </div>
-          </div>
-
-          {/* Action Bar & Filter Pills */}
-          <div className="card-soft p-5 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b">
-              <div>
-                <h3 className="text-base font-semibold text-foreground">Patient Invoices &amp; Receipts</h3>
-                <p className="text-xs text-muted-foreground">
-                  Individual billing records for {patient.name} ({patient.regNo})
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="rounded-xl text-xs"
-                  asChild
-                >
-                  <Link to="/billing" search={{ patientId: patient.id }}>
-                    View in Main Billing <ChevronRight className="ml-1 h-3.5 w-3.5" />
-                  </Link>
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={() => {
-                    setBillDate(todayISO());
-                    setBillFee(settings.consultationFee ?? 300);
-                    setBillDialogOpen(true);
-                  }}
-                  className="rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs shadow-xs"
-                >
-                  <Receipt className="mr-1.5 h-3.5 w-3.5" /> Create Bill
-                </Button>
-              </div>
-            </div>
-
-            {/* Filter status pills */}
-            <div className="flex flex-wrap items-center gap-2">
-              {[
-                { key: "all", label: "All Bills", count: pBills.length },
-                { key: "Paid", label: "Paid", count: pBills.filter((b) => b.status === "Paid").length },
-                { key: "Partial", label: "Partial", count: pBills.filter((b) => b.status === "Partial").length },
-                { key: "Pending", label: "Pending", count: pBills.filter((b) => b.status === "Pending").length },
-              ].map((pill) => (
-                <button
-                  key={pill.key}
-                  type="button"
-                  onClick={() => setBillsTabStatusFilter(pill.key as any)}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
-                    billsTabStatusFilter === pill.key
-                      ? "bg-primary text-primary-foreground shadow-xs"
-                      : "bg-secondary text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {pill.label} ({pill.count})
-                </button>
               ))}
             </div>
+          )}
+        </TabsContent>
+      </Tabs>
 
-            {filteredBills.length === 0 ? (
-              <div className="py-12 text-center text-sm text-muted-foreground">
-                <Receipt className="mx-auto h-8 w-8 text-muted-foreground/60 mb-2" />
-                <p>No bills found in this view.</p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-3 rounded-xl"
-                  onClick={() => {
-                    setBillDate(todayISO());
-                    setBillFee(settings.consultationFee ?? 300);
-                    setBillDialogOpen(true);
-                  }}
-                >
-                  <Plus className="mr-1.5 h-3.5 w-3.5" /> Create first bill for {patient.name}
-                </Button>
+      {/* ─────────────────────────────────────────────────────────────
+          NEW VISIT WORKFLOW MODAL DIALOG (Comprehensive Consultation)
+      ───────────────────────────────────────────────────────────── */}
+      <Dialog open={newVisitOpen} onOpenChange={setNewVisitOpen}>
+        <DialogContent className="max-w-3xl max-h-[92vh] overflow-y-auto p-5 sm:p-6">
+          <DialogHeader className="pb-3 border-b">
+            <DialogTitle className="text-lg font-bold text-foreground flex items-center gap-2">
+              <Stethoscope className="h-5 w-5 text-emerald-600" />
+              New Consultation Visit — {patient.name}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-muted-foreground">
+              Reg ID: <strong className="text-foreground font-mono">{patient.regNo}</strong> &bull; Prior Visits: {pVisits.length}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-5 py-3">
+            {/* 1. Visit Details Section */}
+            <div className="space-y-3">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                1. Visit &amp; Clinical Findings
+              </h4>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="nv-date">Visit Date</Label>
+                  <Input
+                    id="nv-date"
+                    type="date"
+                    value={nvDate}
+                    max={todayISO()}
+                    onChange={(e) => setNvDate(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="nv-type">Visit Type</Label>
+                  <Select value={nvType} onValueChange={(v) => setNvType(v as "New" | "Follow-up")}>
+                    <SelectTrigger id="nv-type">
+                      <SelectValue placeholder="Visit type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="New">New Consultation (First Visit)</SelectItem>
+                      <SelectItem value="Follow-up">Follow-up Consultation</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="nv-complaint">Chief Complaint</Label>
+                  <Input
+                    id="nv-complaint"
+                    placeholder="e.g. Headache, gastric discomfort, joint stiffness..."
+                    value={nvComplaint}
+                    onChange={(e) => setNvComplaint(e.target.value)}
+                  />
+                </div>
+
+                <div className="space-y-1.5 sm:col-span-2">
+                  <Label htmlFor="nv-notes">Clinical Notes &amp; Observations</Label>
+                  <Textarea
+                    id="nv-notes"
+                    placeholder="Doctor's clinical findings, physical generals, response to previous remedy..."
+                    rows={2}
+                    value={nvNotes}
+                    onChange={(e) => setNvNotes(e.target.value)}
+                  />
+                </div>
               </div>
-            ) : (
-              <div className="grid gap-3.5">
-                {filteredBills.map((b) => {
-                  const total = billTotal(b);
-                  const balance = total - b.amountReceived;
-                  return (
-                    <div
-                      key={b.id}
-                      className="card-lift rounded-xl border bg-card p-4 transition-all space-y-3"
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-sm font-bold text-foreground">
-                            {b.invoiceNo}
-                          </span>
-                          <span className="text-xs text-muted-foreground">
-                            · {formatDate(b.date)}
-                          </span>
-                          <Badge
-                            variant="outline"
-                            className={
-                              b.status === "Paid"
-                                ? "bg-success-soft text-success border-success/30"
-                                : b.status === "Partial"
-                                  ? "bg-warning-soft text-warning-foreground border-warning/30"
-                                  : "bg-danger-soft text-destructive border-destructive/30"
-                            }
-                          >
-                            {b.status}
-                          </Badge>
-                          {b.paymentMode && (
-                            <Badge variant="secondary" className="text-xs">
-                              <CreditCard className="mr-1 h-3 w-3" /> {b.paymentMode}
-                            </Badge>
-                          )}
-                          {b.prescriptionId ? (
-                            <Badge variant="outline" className="text-xs text-indigo-700 bg-indigo-50 border-indigo-200 dark:bg-indigo-950 dark:text-indigo-300">
-                              Prescription Bill
-                            </Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-xs text-slate-700 bg-slate-50 border-slate-200 dark:bg-slate-900 dark:text-slate-300">
-                              Consultation Bill
-                            </Badge>
-                          )}
-                        </div>
+            </div>
 
-                        <div className="flex items-center gap-3">
-                          <div className="text-right">
-                            <p className="font-bold text-sm text-foreground">{inr(total)}</p>
-                            {b.status !== "Paid" && (
-                              <p className="text-xs font-semibold text-destructive">
-                                Due: {inr(balance)}
-                              </p>
-                            )}
-                          </div>
-                        </div>
+            {/* 2. Prescription Section */}
+            <div className="space-y-3 pt-3 border-t">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="nv-include-rx"
+                    checked={nvIncludeRx}
+                    onCheckedChange={setNvIncludeRx}
+                  />
+                  <Label htmlFor="nv-include-rx" className="text-xs font-bold uppercase tracking-wider text-muted-foreground cursor-pointer">
+                    2. Prescribe Medicines
+                  </Label>
+                </div>
+
+                {nvIncludeRx && lastPrescription && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs rounded-lg border-emerald-500/30 text-emerald-700 dark:text-emerald-300"
+                    onClick={() => {
+                      setNvRxItems(lastPrescription.items.map((it) => ({ ...it, id: uid() })));
+                      toast.info("Copied medicines from previous prescription");
+                    }}
+                  >
+                    <RefreshCw className="mr-1 h-3 w-3" /> Copy Last Rx Items
+                  </Button>
+                )}
+              </div>
+
+              {nvIncludeRx && (
+                <div className="space-y-3 bg-secondary/20 p-3.5 rounded-xl border">
+                  {nvRxItems.map((item, index) => (
+                    <div key={item.id} className="p-3 bg-background rounded-xl border space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-bold text-muted-foreground uppercase">
+                          Medicine #{index + 1}
+                        </span>
+                        {nvRxItems.length > 1 && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                            onClick={() => setNvRxItems(nvRxItems.filter((_, i) => i !== index))}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
                       </div>
 
-                      {/* Line items table */}
-                      <div className="rounded-lg bg-secondary/30 p-2.5 border text-xs divide-y divide-border/60">
-                        {b.items.map((item, idx) => (
-                          <div key={idx} className="flex justify-between py-1 first:pt-0 last:pb-0">
-                            <span className="font-medium text-foreground">
-                              {item.label} <span className="text-muted-foreground">× {item.qty}</span>
-                            </span>
-                            <span className="font-mono text-muted-foreground">
-                              {inr(item.qty * item.rate)}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Footer & Actions */}
-                      <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t">
-                        <div className="text-xs text-muted-foreground">
-                          Paid: <strong className="text-foreground">{inr(b.amountReceived)}</strong>
-                          {b.status !== "Paid" && (
-                            <> · Balance: <strong className="text-destructive">{inr(balance)}</strong></>
-                          )}
+                      <div className="grid gap-2 sm:grid-cols-3">
+                        <div className="sm:col-span-2">
+                          <MedicineCombobox
+                            value={item.medicineId}
+                            medicines={medicines}
+                            onChange={(m: Medicine) => {
+                              const updated = [...nvRxItems];
+                              updated[index] = {
+                                ...item,
+                                medicineId: m.id,
+                                medicineName: m.name,
+                                potency: m.potency || "30CH",
+                                formType: m.formType || "Bottle",
+                              };
+                              setNvRxItems(updated);
+                            }}
+                          />
                         </div>
 
-                        <div className="flex items-center gap-1.5">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8 rounded-lg px-2.5 text-xs shadow-xs"
-                            asChild
-                          >
-                            <Link to="/billing/$id" params={{ id: b.id }}>
-                              <Receipt className="mr-1.5 h-3.5 w-3.5 text-primary" /> Open Bill
-                            </Link>
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            className="h-8 rounded-lg px-2.5 text-xs shadow-xs"
-                            onClick={() => setPrintingBill(b)}
-                          >
-                            <Printer className="mr-1.5 h-3.5 w-3.5 text-emerald-600" /> Print Receipt
-                          </Button>
-                          <WhatsAppButton
-                            size="sm"
-                            label="WhatsApp PDF"
-                            loading={sharingBillId === b.id}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              handleSendBillWhatsApp(b);
+                        <div>
+                          <Input
+                            placeholder="Potency (e.g. 30CH, 200CH)"
+                            value={item.potency}
+                            onChange={(e) => {
+                              const updated = [...nvRxItems];
+                              updated[index] = { ...item, potency: e.target.value };
+                              setNvRxItems(updated);
+                            }}
+                          />
+                        </div>
+
+                        <div>
+                          <Input
+                            placeholder="Dosage (e.g. 5 drops, 2 pills)"
+                            value={item.dosage}
+                            onChange={(e) => {
+                              const updated = [...nvRxItems];
+                              updated[index] = { ...item, dosage: e.target.value };
+                              setNvRxItems(updated);
+                            }}
+                          />
+                        </div>
+
+                        <div>
+                          <Input
+                            placeholder="Frequency (e.g. 3 times/day)"
+                            value={item.frequency}
+                            onChange={(e) => {
+                              const updated = [...nvRxItems];
+                              updated[index] = { ...item, frequency: e.target.value };
+                              setNvRxItems(updated);
+                            }}
+                          />
+                        </div>
+
+                        <div>
+                          <Input
+                            placeholder="Duration (e.g. 7 days)"
+                            value={item.duration}
+                            onChange={(e) => {
+                              const updated = [...nvRxItems];
+                              updated[index] = { ...item, duration: e.target.value };
+                              setNvRxItems(updated);
                             }}
                           />
                         </div>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </TabsContent>
-
-
-        {caseAccess !== "hidden" && (
-          <TabsContent value="refills" className="mt-5">
-            <div className="card-soft p-5">
-              {refills.length === 0 ? (
-                <p className="py-10 text-center text-sm text-muted-foreground">No refills issued for this patient.</p>
-              ) : (
-                <ul className="divide-y">
-                  {refills.map((r) => (
-                    <li key={r.id} className="flex items-center gap-3 py-3">
-                      <RotateCcw className="h-4 w-4 text-primary" />
-                      <span className="text-sm font-medium">{formatDate(r.date)}</span>
-                      <span className="truncate text-sm text-muted-foreground">
-                        {r.items.map((i) => i.medicineName).join(", ")}
-                      </span>
-                    </li>
                   ))}
-                </ul>
+
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="w-full text-xs rounded-xl"
+                    onClick={() => setNvRxItems([...nvRxItems, blankRxRow()])}
+                  >
+                    <Plus className="mr-1.5 h-3.5 w-3.5" /> Add Another Medicine
+                  </Button>
+                </div>
               )}
             </div>
-          </TabsContent>
-        )}
-      </Tabs>
 
-      <Sheet open={editOpen} onOpenChange={setEditOpen}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-md">
-          <SheetHeader><SheetTitle>Edit patient</SheetTitle></SheetHeader>
-          {draft && (
-            <div className="mt-6 space-y-4 px-4 pb-8">
-              {([
-                ["regNo", "Registration Number"],
-                ["name", "Full name"],
-                ["phone", "Phone"],
-                ["email", "Email"],
-                ["occupation", "Occupation"],
-                ["bloodGroup", "Blood group"],
-              ] as const).map(([field, label]) => (
-                <div key={field} className="space-y-2">
-                  <Label htmlFor={field}>{label}</Label>
-                  <Input id={field} value={draft[field]} onChange={(e) => setDraft({ ...draft, [field]: e.target.value })} />
+            {/* 3. Billing Section */}
+            <div className="space-y-3 pt-3 border-t">
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="nv-include-bill"
+                  checked={nvIncludeBill}
+                  onCheckedChange={setNvIncludeBill}
+                />
+                <Label htmlFor="nv-include-bill" className="text-xs font-bold uppercase tracking-wider text-muted-foreground cursor-pointer">
+                  3. Billing &amp; Payment
+                </Label>
+              </div>
+
+              {nvIncludeBill && (
+                <div className="grid gap-3 sm:grid-cols-3 bg-secondary/20 p-3.5 rounded-xl border">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="nv-fee">Fee (₹)</Label>
+                    <Input
+                      id="nv-fee"
+                      type="number"
+                      min={0}
+                      value={nvCustomFee}
+                      onChange={(e) => setNvCustomFee(Number(e.target.value) || 0)}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="nv-pay-status">Payment Status</Label>
+                    <Select value={nvPaymentStatus} onValueChange={(v) => setNvPaymentStatus(v as "Paid" | "Pending")}>
+                      <SelectTrigger id="nv-pay-status">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Paid">Paid</SelectItem>
+                        <SelectItem value="Pending">Pending</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="nv-pay-mode">Payment Mode</Label>
+                    <Select
+                      value={nvPaymentMode}
+                      disabled={nvPaymentStatus !== "Paid"}
+                      onValueChange={(v) => setNvPaymentMode(v as "Cash" | "UPI" | "Card")}
+                    >
+                      <SelectTrigger id="nv-pay-mode">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Cash">Cash</SelectItem>
+                        <SelectItem value="UPI">UPI / GPay</SelectItem>
+                        <SelectItem value="Card">Card</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-              ))}
-              <div className="space-y-2">
-                <Label htmlFor="e-age">Age</Label>
-                <Input id="e-age" type="number" value={draft.age} onChange={(e) => setDraft({ ...draft, age: Number(e.target.value) })} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="e-address">Address</Label>
-                <Textarea id="e-address" rows={3} value={draft.address} onChange={(e) => setDraft({ ...draft, address: e.target.value })} />
-              </div>
-              <Button
-                className="w-full rounded-xl"
-                onClick={() => {
-                  updatePatient(patient.id, draft);
-                  setEditOpen(false);
-                  toast.success("Patient details updated");
-                }}
-              >
-                Save changes
-              </Button>
+              )}
             </div>
-          )}
-        </SheetContent>
-      </Sheet>
 
-      <Sheet open={noteOpen} onOpenChange={setNoteOpen}>
-        <SheetContent className="w-full sm:max-w-md">
-          <SheetHeader><SheetTitle>Add visit note</SheetTitle></SheetHeader>
-          <div className="mt-6 space-y-4 px-4">
-            <div className="space-y-2">
-              <Label htmlFor="v-complaint">Chief complaint today</Label>
-              <Input id="v-complaint" value={note.complaint} onChange={(e) => setNote({ ...note, complaint: e.target.value })} />
+            {/* 4. Next Follow-up Section */}
+            <div className="space-y-3 pt-3 border-t">
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="nv-include-fu"
+                  checked={nvIncludeFollowUp}
+                  onCheckedChange={setNvIncludeFollowUp}
+                />
+                <Label htmlFor="nv-include-fu" className="text-xs font-bold uppercase tracking-wider text-muted-foreground cursor-pointer">
+                  4. Schedule Next Follow-up
+                </Label>
+              </div>
+
+              {nvIncludeFollowUp && (
+                <div className="space-y-3 bg-secondary/20 p-3.5 rounded-xl border">
+                  {/* Quick Preset Buttons */}
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    {[7, 14, 21, 30].map((days) => {
+                      const d = new Date();
+                      d.setDate(d.getDate() + days);
+                      const iso = d.toISOString().slice(0, 10);
+                      return (
+                        <Button
+                          key={days}
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs rounded-lg"
+                          onClick={() => {
+                            setNvFollowUpDate(iso);
+                            setNvFollowUpReason(`Review after ${days} days`);
+                          }}
+                        >
+                          +{days} Days
+                        </Button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="nv-fu-date">Follow-up Date</Label>
+                      <Input
+                        id="nv-fu-date"
+                        type="date"
+                        min={todayISO()}
+                        value={nvFollowUpDate}
+                        onChange={(e) => setNvFollowUpDate(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="nv-fu-reason">Reason</Label>
+                      <Input
+                        id="nv-fu-reason"
+                        placeholder="e.g. Review response to remedy"
+                        value={nvFollowUpReason}
+                        onChange={(e) => setNvFollowUpReason(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="v-notes">Notes</Label>
-              <Textarea id="v-notes" rows={4} value={note.notes} onChange={(e) => setNote({ ...note, notes: e.target.value })} />
-            </div>
-            <Button
-              className="w-full rounded-xl"
-              onClick={() => {
-                addVisit({
-                  patientId: patient.id,
-                  date: todayISO(),
-                  type: pVisits.length ? "Follow-up" : "New",
-                  complaint: note.complaint || "Consultation",
-                  notes: note.notes,
-                });
-                setNote({ complaint: "", notes: "" });
-                setNoteOpen(false);
-                toast.success("Visit note added");
-              }}
-            >
-              Save visit note
-            </Button>
           </div>
-        </SheetContent>
-      </Sheet>
 
-      <Dialog open={!!printingRx} onOpenChange={(open) => !open && setPrintingRx(null)}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
-          <DialogHeader className="no-print flex flex-row items-center justify-between pb-3 border-b">
-            <div>
-              <DialogTitle className="text-base font-bold text-foreground">
-                Prescription — Dr. Ayus Homoeopathy Hospital
+          <DialogFooter className="gap-2 sm:gap-0 pt-3 border-t">
+            <Button variant="outline" onClick={() => setNewVisitOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+              onClick={handleSaveCompleteVisit}
+            >
+              <Check className="mr-1.5 h-4 w-4" /> Save Complete Visit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─────────────────────────────────────────────────────────────
+          FULL VISIT DOSSIER MODAL
+      ───────────────────────────────────────────────────────────── */}
+      {fullVisitModal && (
+        <Dialog open={!!fullVisitModal} onOpenChange={(open) => !open && setFullVisitModal(null)}>
+          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto p-5 sm:p-6">
+            <DialogHeader className="pb-3 border-b">
+              <DialogTitle className="text-base font-bold text-foreground flex items-center gap-2">
+                <Stethoscope className="h-5 w-5 text-emerald-600" />
+                Complete Visit Dossier &bull; {formatDate(fullVisitModal.date)}
               </DialogTitle>
               <DialogDescription className="text-xs text-muted-foreground">
-                Official prescription document ready for high-resolution printing or PDF export.
+                Patient: <strong className="text-foreground">{patient.name}</strong> ({patient.regNo}) &bull; Type: {fullVisitModal.type}
               </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4 py-3">
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Chief Complaint
+                </span>
+                <p className="text-sm font-semibold text-foreground p-3 rounded-xl bg-secondary/30 border">
+                  {fullVisitModal.complaint || "Routine Consultation"}
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Case Notes &amp; Observations
+                </span>
+                <p className="text-xs text-muted-foreground p-3 rounded-xl bg-secondary/30 border whitespace-pre-wrap">
+                  {fullVisitModal.notes || "None recorded"}
+                </p>
+              </div>
+
+              {/* Linked Prescription in Dossier */}
+              {(() => {
+                const rx = pPres.find((p) => p.visitId === fullVisitModal.id || p.date === fullVisitModal.date);
+                if (!rx) return null;
+                return (
+                  <div className="space-y-2 p-3 rounded-xl border border-emerald-500/20 bg-emerald-50/20 dark:bg-emerald-950/10">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-emerald-800 dark:text-emerald-300">
+                        Prescribed Medicines ({rx.items.length})
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs"
+                        onClick={() => {
+                          setFullVisitModal(null);
+                          setPrintingRx(rx);
+                        }}
+                      >
+                        <Printer className="mr-1 h-3 w-3" /> Print Rx
+                      </Button>
+                    </div>
+
+                    <div className="divide-y text-xs">
+                      {rx.items.map((it, i) => (
+                        <div key={i} className="py-1 flex items-center justify-between">
+                          <span>{it.medicineName} ({it.potency})</span>
+                          <span className="text-muted-foreground">{it.dosage} · {it.frequency}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                className="rounded-xl shadow-sm"
-                onClick={() => window.print()}
-              >
-                <Printer className="mr-1.5 h-4 w-4 text-emerald-600" /> Print
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setFullVisitModal(null)}>
+                Close
               </Button>
-            </div>
-          </DialogHeader>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
 
-          {printingRx && patient && (
-            <div className="py-2">
-              <PrescriptionPrintSheet
-                prescription={printingRx}
-                patient={patient}
-                visit={visits.find((v) => v.id === printingRx.visitId)}
-                medicines={medicines}
-                settings={settings}
-              />
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Add Chief Complaint Modal */}
-      <Dialog open={complaintDialogOpen} onOpenChange={setComplaintDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Add Chief Complaint</DialogTitle>
-            <DialogDescription>
-              Record a new chief complaint for {patient.name}. Date and time are automatically recorded in IST.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label htmlFor="chief-complaint-input" className="text-sm font-semibold">
-                Chief Complaint *
-              </Label>
-              <Textarea
-                id="chief-complaint-input"
-                rows={3}
-                placeholder="e.g. Stomach pain, Head pain, Nausea..."
-                value={newComplaintText}
-                onChange={(e) => setNewComplaintText(e.target.value)}
-                autoFocus
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="complaint-date" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                  <CalendarClock className="h-3.5 w-3.5 text-primary" />
-                  Date *
-                </Label>
-                <Input
-                  id="complaint-date"
-                  type="date"
-                  value={complaintDate}
-                  onChange={(e) => setComplaintDate(e.target.value)}
-                  className="h-9 text-xs"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="complaint-time" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                  <Clock className="h-3.5 w-3.5 text-primary" />
-                  Time *
-                </Label>
-                <Input
-                  id="complaint-time"
-                  type="time"
-                  value={complaintTime}
-                  onChange={(e) => setComplaintTime(e.target.value)}
-                  className="h-9 text-xs"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
-              <div className="flex items-center gap-1.5 truncate">
-                <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                <span className="truncate">
-                  Scheduled for: <strong className="font-semibold text-foreground">{formatComplaintDateTime(istToUtcString(complaintDate, complaintTime))}</strong>
-                </span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const now = getNowIST();
-                  setComplaintDate(now.date);
-                  setComplaintTime(now.time);
-                }}
-                className="shrink-0 text-primary hover:underline font-medium text-[11px] ml-2"
-              >
-                Reset to Now
-              </button>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Associated Visit</Label>
-              <Select value={selectedVisitId || "none"} onValueChange={(val) => setSelectedVisitId(val === "none" ? "" : val)}>
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select visit (optional)" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">General Consultation (No linked visit)</SelectItem>
-                  {pVisits.map((v) => (
-                    <SelectItem key={v.id} value={v.id}>
-                      Visit on {formatDate(v.date)} ({v.type})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setComplaintDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                if (!newComplaintText.trim()) {
-                  toast.error("Please enter a chief complaint");
-                  return;
-                }
-                if (!complaintDate) {
-                  toast.error("Please select a date");
-                  return;
-                }
-                const createdAtUtc = istToUtcString(complaintDate, complaintTime || "12:00");
-                addChiefComplaint({
-                  patientId: patient.id,
-                  visitId: selectedVisitId || null,
-                  complaint: newComplaintText.trim(),
-                  createdAt: createdAtUtc,
-                });
-                toast.success("Chief complaint recorded");
-                setNewComplaintText("");
-                setComplaintDialogOpen(false);
-              }}
-            >
-              Save Complaint
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Chief Complaint Modal */}
-      <Dialog open={!!editingComplaint} onOpenChange={(open) => !open && setEditingComplaint(null)}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Edit Chief Complaint</DialogTitle>
-            <DialogDescription>
-              Update this complaint entry. The historical creation timestamp is preserved.
-            </DialogDescription>
-          </DialogHeader>
-
-          {editingComplaint && (
-            <div className="space-y-4 py-2">
-              <div className="space-y-2">
-                <Label htmlFor="edit-complaint-input" className="text-sm font-semibold">
-                  Chief Complaint *
-                </Label>
-                <Textarea
-                  id="edit-complaint-input"
-                  rows={3}
-                  value={editText}
-                  onChange={(e) => setEditText(e.target.value)}
-                  autoFocus
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit-complaint-date" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                    <CalendarClock className="h-3.5 w-3.5 text-primary" />
-                    Date *
-                  </Label>
-                  <Input
-                    id="edit-complaint-date"
-                    type="date"
-                    value={editDate}
-                    onChange={(e) => setEditDate(e.target.value)}
-                    className="h-9 text-xs"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit-complaint-time" className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                    <Clock className="h-3.5 w-3.5 text-primary" />
-                    Time *
-                  </Label>
-                  <Input
-                    id="edit-complaint-time"
-                    type="time"
-                    value={editTime}
-                    onChange={(e) => setEditTime(e.target.value)}
-                    className="h-9 text-xs"
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
-                <div className="flex items-center gap-1.5 truncate">
-                  <Clock className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  <span className="truncate">
-                    Updated timestamp: <strong className="font-semibold text-foreground">{formatComplaintDateTime(istToUtcString(editDate, editTime))}</strong>
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const now = getNowIST();
-                    setEditDate(now.date);
-                    setEditTime(now.time);
-                  }}
-                  className="shrink-0 text-primary hover:underline font-medium text-[11px] ml-2"
-                >
-                  Set to Now
-                </button>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Associated Visit</Label>
-                <Select value={editVisitId || "none"} onValueChange={(val) => setEditVisitId(val === "none" ? "" : val)}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue placeholder="Select visit (optional)" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">General Consultation (No linked visit)</SelectItem>
-                    {pVisits.map((v) => (
-                      <SelectItem key={v.id} value={v.id}>
-                        Visit on {formatDate(v.date)} ({v.type})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          )}
-
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setEditingComplaint(null)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                if (!editingComplaint) return;
-                if (!editText.trim()) {
-                  toast.error("Complaint cannot be empty");
-                  return;
-                }
-                const createdAtUtc = editDate ? istToUtcString(editDate, editTime || "12:00") : undefined;
-                updateChiefComplaint(editingComplaint.id, {
-                  complaint: editText.trim(),
-                  visitId: editVisitId || null,
-                  createdAt: createdAtUtc,
-                });
-                toast.success("Chief complaint updated");
-                setEditingComplaint(null);
-              }}
-            >
-              Save Changes
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Delete Chief Complaint Alert Dialog */}
-      <AlertDialog open={!!deletingComplaint} onOpenChange={(open) => !open && setDeletingComplaint(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Chief Complaint?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete this chief complaint record?
-              {deletingComplaint && (
-                <span className="mt-2 block rounded-lg border bg-secondary/50 p-2.5 font-medium text-foreground">
-                  &ldquo;{deletingComplaint.complaint}&rdquo;
-                  <span className="block text-xs font-normal text-muted-foreground mt-1">
-                    Recorded on {formatComplaintDateTime(deletingComplaint.createdAt)}
-                  </span>
-                </span>
-              )}
-              <span className="mt-2 block text-xs text-muted-foreground">
-                This will delete only this specific complaint record. Visits, prescriptions, and billing will not be affected.
-              </span>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => {
-                if (!deletingComplaint) return;
-                deleteChiefComplaint(deletingComplaint.id);
-                toast.success("Chief complaint deleted");
-                setDeletingComplaint(null);
-              }}
-            >
-              Delete Complaint
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Create Bill Modal */}
-      <Dialog open={billDialogOpen} onOpenChange={setBillDialogOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Receipt className="h-5 w-5 text-emerald-600" />
-              New Bill for {patient.name}
-            </DialogTitle>
-            <DialogDescription>
-              Create an official invoice for {patient.name} ({patient.regNo}). This will open the bill editor to add medicine charges or record payments.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            <div className="rounded-lg bg-secondary/40 p-3 border text-xs space-y-1">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Patient:</span>
-                <span className="font-semibold text-foreground">{patient.name}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Reg. No:</span>
-                <span className="font-mono text-foreground">{patient.regNo}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Phone:</span>
-                <span className="text-foreground">{patient.phone}</span>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="bill-date-input" className="text-sm font-semibold">
-                Bill / Invoice Date
-              </Label>
-              <Input
-                id="bill-date-input"
-                type="date"
-                value={billDate}
-                onChange={(e) => setBillDate(e.target.value)}
-                max={todayISO()}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="bill-fee-input" className="text-sm font-semibold">
-                Consultation Fee (₹)
-              </Label>
-              <Input
-                id="bill-fee-input"
-                type="number"
-                min={0}
-                value={billFee}
-                onChange={(e) => setBillFee(Number(e.target.value) || 0)}
-              />
-              <p className="text-xs text-muted-foreground">
-                Default clinic fee: {inr(settings.consultationFee)}. You can add medicine charges and other items on the bill page.
-              </p>
-            </div>
-          </div>
-
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setBillDialogOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              className="bg-emerald-600 hover:bg-emerald-700 text-white"
-              onClick={handleCreateBill}
-            >
-              <Receipt className="mr-2 h-4 w-4" /> Create &amp; Open Bill
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Print Bill Modal */}
-      <Dialog open={!!printingBill} onOpenChange={(open) => !open && setPrintingBill(null)}>
-        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
+      {/* ─────────────────────────────────────────────────────────────
+          PATIENT SUMMARY PRINT SHEET MODAL
+      ───────────────────────────────────────────────────────────── */}
+      <Dialog open={printingSummary} onOpenChange={setPrintingSummary}>
+        <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto p-4 sm:p-6">
           <DialogHeader className="no-print flex flex-row items-center justify-between pb-3 border-b">
             <div>
               <DialogTitle className="text-base font-bold text-foreground">
-                Bill &amp; Receipt — {printingBill?.invoiceNo}
+                Patient Medical Summary Report
               </DialogTitle>
               <DialogDescription className="text-xs text-muted-foreground">
-                Official medical invoice and receipt for {patient.name} ({patient.regNo}).
+                Official clinical summary for {patient.name} ({patient.regNo}).
               </DialogDescription>
             </div>
             <div className="flex items-center gap-2">
@@ -2120,14 +2399,314 @@ function PatientProfile() {
             </div>
           </DialogHeader>
 
-          {printingBill && patient && (
+          <div className="py-2">
+            <PatientSummaryPrintSheet
+              patient={patient}
+              caseHistory={caseHistories[patient.id]}
+              chiefComplaints={pComplaints}
+              visits={pVisits}
+              prescriptions={pPres}
+              bills={pBills}
+              followUps={pFollowUps}
+              settings={settings}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─────────────────────────────────────────────────────────────
+          PRESCRIPTION PRINT PREVIEW MODAL
+      ───────────────────────────────────────────────────────────── */}
+      <Dialog open={!!printingRx} onOpenChange={(open) => !open && setPrintingRx(null)}>
+        <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto p-4 sm:p-6">
+          <DialogHeader className="no-print flex flex-row items-center justify-between pb-3 border-b">
+            <div>
+              <DialogTitle className="text-base font-bold text-foreground">
+                Prescription Print Preview
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">
+                Prescription issued on {printingRx?.date} for {patient.name} ({patient.regNo}).
+              </DialogDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                className="rounded-xl shadow-xs"
+                onClick={() => window.print()}
+              >
+                <Printer className="mr-1.5 h-4 w-4 text-emerald-600" /> Print
+              </Button>
+            </div>
+          </DialogHeader>
+
+          {printingRx && (
+            <div className="py-2">
+              <PrescriptionPrintSheet
+                prescription={printingRx}
+                patient={patient}
+                visit={visits.find((v) => v.id === printingRx.visitId)}
+                medicines={medicines}
+                settings={settings}
+              />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* ─────────────────────────────────────────────────────────────
+          BILL PRINT PREVIEW MODAL
+      ───────────────────────────────────────────────────────────── */}
+      <Dialog open={!!printingBill} onOpenChange={(open) => !open && setPrintingBill(null)}>
+        <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto p-4 sm:p-6">
+          <DialogHeader className="no-print flex flex-row items-center justify-between pb-3 border-b">
+            <div>
+              <DialogTitle className="text-base font-bold text-foreground">
+                Invoice &amp; Receipt — {printingBill?.invoiceNo}
+              </DialogTitle>
+              <DialogDescription className="text-xs text-muted-foreground">
+                Official invoice for {patient.name} ({patient.regNo}).
+              </DialogDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                className="rounded-xl shadow-xs"
+                onClick={() => window.print()}
+              >
+                <Printer className="mr-1.5 h-4 w-4 text-emerald-600" /> Print
+              </Button>
+            </div>
+          </DialogHeader>
+
+          {printingBill && (
             <div className="py-2">
               <BillPrintSheet bill={printingBill} patient={patient} settings={settings} />
             </div>
           )}
         </DialogContent>
       </Dialog>
+
+      {/* ─────────────────────────────────────────────────────────────
+          EDIT PATIENT SHEET
+      ───────────────────────────────────────────────────────────── */}
+      {draft && (
+        <Sheet open={editOpen} onOpenChange={setEditOpen}>
+          <SheetContent side="right" className="w-full sm:max-w-lg overflow-y-auto">
+            <SheetHeader>
+              <SheetTitle>Edit Patient Record</SheetTitle>
+            </SheetHeader>
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label>Full Name</Label>
+                <Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Age</Label>
+                  <Input type="number" min={0} value={draft.age} onChange={(e) => setDraft({ ...draft, age: Number(e.target.value) || 0 })} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Gender</Label>
+                  <Select value={draft.gender} onValueChange={(v) => setDraft({ ...draft, gender: v as any })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Male">Male</SelectItem>
+                      <SelectItem value="Female">Female</SelectItem>
+                      <SelectItem value="Other">Other</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Phone</Label>
+                  <Input value={draft.phone} onChange={(e) => setDraft({ ...draft, phone: e.target.value })} />
+                </div>
+                <div className="space-y-2">
+                  <Label>Blood Group</Label>
+                  <Input value={draft.bloodGroup} onChange={(e) => setDraft({ ...draft, bloodGroup: e.target.value })} />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Email</Label>
+                <Input value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>Address</Label>
+                <Textarea value={draft.address} rows={2} onChange={(e) => setDraft({ ...draft, address: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <Label>Occupation</Label>
+                <Input value={draft.occupation} onChange={(e) => setDraft({ ...draft, occupation: e.target.value })} />
+              </div>
+              <div className="space-y-2">
+                <TagInput
+                  label="Allergies"
+                  tags={draft.allergies}
+                  onChange={(t) => setDraft({ ...draft, allergies: t })}
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-4 border-t">
+              <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+              <Button
+                onClick={() => {
+                  updatePatient(patient.id, draft);
+                  toast.success("Patient details updated");
+                  setEditOpen(false);
+                }}
+              >
+                Save Changes
+              </Button>
+            </div>
+          </SheetContent>
+        </Sheet>
+      )}
+
+      {/* ─────────────────────────────────────────────────────────────
+          SCHEDULE FOLLOW-UP DIALOG
+      ───────────────────────────────────────────────────────────── */}
+      <Dialog open={followUpOpen} onOpenChange={setFollowUpOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Schedule Follow-up</DialogTitle>
+            <DialogDescription>Set a consultation review date for {patient.name}.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Date</Label>
+              <Input
+                type="date"
+                min={todayISO()}
+                value={followUpDate}
+                onChange={(e) => setFollowUpDate(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Reason</Label>
+              <Input
+                placeholder="e.g. Check progress on new medicine"
+                value={followUpReason}
+                onChange={(e) => setFollowUpReason(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFollowUpOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                if (!followUpDate) {
+                  toast.error("Please select a date");
+                  return;
+                }
+                addFollowUp(patient.id, followUpDate, followUpReason || "Review checkup");
+                toast.success("Follow-up scheduled");
+                setFollowUpOpen(false);
+              }}
+            >
+              Save Follow-up
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─────────────────────────────────────────────────────────────
+          ADD CHIEF COMPLAINT DIALOG
+      ───────────────────────────────────────────────────────────── */}
+      <Dialog open={complaintDialogOpen} onOpenChange={setComplaintDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add Chief Complaint</DialogTitle>
+            <DialogDescription>Log a new symptom or clinical concern for {patient.name}.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Chief Complaint Description</Label>
+              <Textarea
+                placeholder="Describe the complaint, symptoms, onset..."
+                rows={3}
+                value={newComplaintText}
+                onChange={(e) => setNewComplaintText(e.target.value)}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Date (IST)</Label>
+                <Input type="date" value={complaintDate} onChange={(e) => setComplaintDate(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Time (IST)</Label>
+                <Input type="time" value={complaintTime} onChange={(e) => setComplaintTime(e.target.value)} />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setComplaintDialogOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                if (!newComplaintText.trim()) {
+                  toast.error("Please enter a complaint");
+                  return;
+                }
+                const createdAtUtc = complaintDate ? istToUtcString(complaintDate, complaintTime || "12:00") : undefined;
+                addChiefComplaint({
+                  patientId: patient.id,
+                  visitId: selectedVisitId || null,
+                  complaint: newComplaintText.trim(),
+                  createdAt: createdAtUtc,
+                });
+                toast.success("Chief complaint added");
+                setComplaintDialogOpen(false);
+              }}
+            >
+              Save Complaint
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ─────────────────────────────────────────────────────────────
+          CREATE BILL MODAL
+      ───────────────────────────────────────────────────────────── */}
+      <Dialog open={billDialogOpen} onOpenChange={setBillDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Receipt className="h-5 w-5 text-emerald-600" />
+              New Bill for {patient.name}
+            </DialogTitle>
+            <DialogDescription>
+              Create an official invoice for {patient.name} ({patient.regNo}).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Invoice Date</Label>
+              <Input
+                type="date"
+                value={billDate}
+                max={todayISO()}
+                onChange={(e) => setBillDate(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Consultation Fee (₹)</Label>
+              <Input
+                type="number"
+                min={0}
+                value={billFee}
+                onChange={(e) => setBillFee(Number(e.target.value) || 0)}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBillDialogOpen(false)}>Cancel</Button>
+            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={handleCreateBill}>
+              Create &amp; Open Bill
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
-
