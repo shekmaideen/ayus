@@ -499,14 +499,7 @@ function PatientProfile() {
   const pBills = bills.filter((b) => b.patientId === id).sort((a, b) => b.date.localeCompare(a.date));
   const pFollowUps = followUps.filter((f) => f.patientId === id).sort((a, b) => b.dueDate.localeCompare(a.dueDate));
 
-  const lastVisit = pVisits[0];
   const lastPrescription = pPres[0];
-  const lastBill = pBills[0];
-  const pendingFollowUp = pFollowUps.find((f) => f.status === "Pending");
-
-  // Approximate Date of Birth
-  const birthYear = new Date().getFullYear() - patient.age;
-  const approxDob = `01/01/${birthYear}`;
 
   // Financial summary
   const totalBilled = pBills.reduce((acc, b) => acc + billTotal(b), 0);
@@ -635,10 +628,6 @@ function PatientProfile() {
                 <span>&bull;</span>
                 <span className="font-medium text-foreground">
                   Gender: <strong className="text-foreground">{patient.gender}</strong>
-                </span>
-                <span>&bull;</span>
-                <span>
-                  DOB: <strong className="text-foreground">{approxDob}</strong>
                 </span>
                 <span>&bull;</span>
                 <span className="flex items-center gap-1 text-foreground">
@@ -784,68 +773,6 @@ function PatientProfile() {
             TAB 1: OVERVIEW (Concise Medical Summary & Recent Activity)
         ═════════════════════════════════════════════════════════════ */}
         <TabsContent value="overview" className="mt-4 space-y-4">
-          {/* Key Metric Highlights */}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="card-soft p-4 flex items-center justify-between border-l-4 border-l-blue-500">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Total Visits</p>
-                <p className="text-2xl font-bold font-display mt-0.5">{pVisits.length}</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Last: {lastVisit ? formatDate(lastVisit.date) : "No visits yet"}
-                </p>
-              </div>
-              <div className="h-10 w-10 rounded-xl bg-blue-500/10 text-blue-600 flex items-center justify-center">
-                <Stethoscope className="h-5 w-5" />
-              </div>
-            </div>
-
-            <div className="card-soft p-4 flex items-center justify-between border-l-4 border-l-emerald-500">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Prescriptions</p>
-                <p className="text-2xl font-bold font-display mt-0.5">{pPres.length}</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Last: {lastPrescription ? formatDate(lastPrescription.date) : "None"}
-                </p>
-              </div>
-              <div className="h-10 w-10 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center">
-                <Pill className="h-5 w-5" />
-              </div>
-            </div>
-
-            <div className="card-soft p-4 flex items-center justify-between border-l-4 border-l-purple-500">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Next Follow-up</p>
-                <p className="text-base font-bold text-foreground mt-1 truncate">
-                  {pendingFollowUp ? formatDate(pendingFollowUp.dueDate) : "None scheduled"}
-                </p>
-                <p className="text-[11px] text-muted-foreground truncate">
-                  {pendingFollowUp ? pendingFollowUp.reason || "Review" : "All cleared"}
-                </p>
-              </div>
-              <div className="h-10 w-10 rounded-xl bg-purple-500/10 text-purple-600 flex items-center justify-center">
-                <CalendarClock className="h-5 w-5" />
-              </div>
-            </div>
-
-            <div className="card-soft p-4 flex items-center justify-between border-l-4 border-l-amber-500">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Billing Status</p>
-                <p className="text-xl font-bold font-display mt-0.5">
-                  {outstandingBalance > 0 ? (
-                    <span className="text-destructive font-mono">{inr(outstandingBalance)} Due</span>
-                  ) : (
-                    <span className="text-emerald-600 dark:text-emerald-400">All Settled</span>
-                  )}
-                </p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Total Billed: {inr(totalBilled)}
-                </p>
-              </div>
-              <div className="h-10 w-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
-                <Receipt className="h-5 w-5" />
-              </div>
-            </div>
-          </div>
 
           <div className="grid gap-4 lg:grid-cols-3">
             {/* Left 2 Cols: Clinical Snapshot & Latest Prescriptions */}
