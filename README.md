@@ -12,7 +12,7 @@ A modern, high-performance Clinic & Hospital Management System designed for **Dr
 - **Dedicated WhatsApp Messaging**: Independent manual WhatsApp buttons on Patient Registration, Prescription Builder, and Billing to send pre-filled updates via WhatsApp Web without paid API dependencies.
 - **Advanced Medicine Inventory**:
   - Full tracking for Medicine Name, Brand, Form/Type, Potency, Stock Quantity, and live Selling Price.
-  - Form-specific conditional options: `Bottle` (with manufacturer brand and dilution potencies `30CH`, `200CH`, `1M`, `Q`, `4X`, `3X`, `6X`, and manual custom typing), `Tablet` (`3X`, `4X`, `6X`, and manual custom typing), and clean display for other forms.
+  - Form-specific conditional options: `Bottle` (with dilution potencies `30CH`, `200CH`, `1M`, `Q`, `4X`, `3X`, `6X`, and manual custom typing), `Tablet` (`3X`, `4X`, `6X`, and manual custom typing), `Globules` (`1 drum`, `2 drum`, `3 drum`, `size 40`, and manual custom typing), and clean display for other forms.
   - Automatically generated Indian Standard Time (IST / Asia/Kolkata) Stock Entry Date, Day, and Time.
   - Stock Adjustment tool (`+` Add, `-` Remove, `=` Set Exact) with audit logging.
   - Decoupled stock: Prescriptions and bills do not automatically alter stock levels, leaving inventory fully in the staff's control.
@@ -73,12 +73,15 @@ A modern, high-performance Clinic & Hospital Management System designed for **Dr
    JWT_EXPIRES_IN=30d
    ```
 
-5. **Start Development Server**:
-   ```bash
-   npm run dev
-   ```
+5. **Run the Application**:
+   - **For Everyday Clinic Use (Easiest)**:
+     Simply double-click `Start Hospital App.bat`. It will automatically check MySQL, start the server, and open `http://localhost:8080` in your default browser.
+   - **Via Terminal**:
+     ```bash
+     npm run dev
+     ```
 
-6. Open [http://localhost:3000](http://localhost:3000) (or the port indicated in the terminal) in your browser.
+6. Open [http://localhost:8080](http://localhost:8080) in your browser.
 
 ---
 

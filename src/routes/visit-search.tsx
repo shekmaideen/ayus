@@ -11,7 +11,7 @@ import { formatDate, initials } from "@/lib/format";
 export const Route = createFileRoute("/visit-search")({
   head: () => ({
     meta: [
-      { title: "Visit Notes Search — HomeoCare Clinic Manager" },
+      { title: "Visit Notes Search — Dr. Ayus Homoeopathy Hospital" },
       { name: "description", content: "Search across all patient visit complaints and notes." },
     ],
   }),

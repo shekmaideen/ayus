@@ -1,7 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, CheckCircle2, ChevronLeft, ChevronRight, X } from "lucide-react";
-import { useState } from "react";
+import { AlertCircle, Calendar, Check, CheckCircle2, ChevronLeft, ChevronRight, History, UserPlus, X } from "lucide-react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AppShell, PageTitle } from "@/components/AppShell";
 import { Badge } from "@/components/ui/badge";
@@ -15,14 +15,20 @@ import { cn } from "@/lib/utils";
 import type { Patient } from "@/data/types";
 import { WhatsAppButton } from "@/components/WhatsAppButton";
 import { buildRegistrationMessage, openWhatsAppMessage } from "@/lib/whatsapp";
+import { todayISO } from "@/lib/format";
 
 export const Route = createFileRoute("/patients/new")({
+  validateSearch: (search: Record<string, unknown>): { mode?: string } => {
+    const out: { mode?: string } = {};
+    if (typeof search["mode"] === "string") out.mode = search["mode"];
+    return out;
+  },
   head: () => ({
     meta: [
-      { title: "Register patient — HomeoCare Clinic Manager" },
-      { name: "description", content: "Register a new patient and generate a clinic registration number." },
-      { property: "og:title", content: "Register patient — HomeoCare Clinic Manager" },
-      { property: "og:description", content: "Register a new patient and generate a clinic registration number." },
+      { title: "Register patient — Dr. Ayus Homoeopathy Hospital" },
+      { name: "description", content: "Register a new or existing patient in the clinic management records." },
+      { property: "og:title", content: "Register patient — Dr. Ayus Homoeopathy Hospital" },
+      { property: "og:description", content: "Register a new or existing patient in the clinic management records." },
     ],
   }),
   component: () => (
@@ -35,12 +41,17 @@ export const Route = createFileRoute("/patients/new")({
 const STEPS = ["Personal", "Contact", "Medical"];
 
 function RegisterPatient() {
-  const { addPatient, nextRegNo, settings } = useClinic();
+  const search = Route.useSearch();
+  const { addPatient, nextRegNo, settings, patients } = useClinic();
   const navigate = useNavigate();
+  const [isOldPatient, setIsOldPatient] = useState(search.mode === "old");
   const [step, setStep] = useState(0);
   const [created, setCreated] = useState<Patient | null>(null);
+  const [saving, setSaving] = useState(false);
   const [allergyInput, setAllergyInput] = useState("");
   const [form, setForm] = useState({
+    regNo: "",
+    registeredOn: todayISO(),
     name: "",
     age: "",
     gender: "Female" as Patient["gender"],
@@ -52,10 +63,22 @@ function RegisterPatient() {
     occupation: "",
   });
 
+  const existingPatient = useMemo(() => {
+    const trimmed = form.regNo.trim().toLowerCase();
+    if (!trimmed) return null;
+    return patients.find((p) => p.regNo.toLowerCase() === trimmed) || null;
+  }, [patients, form.regNo]);
+
   const set = (k: keyof typeof form, v: unknown) => setForm((f) => ({ ...f, [k]: v }));
 
   const stepValid =
-    step === 0 ? form.name.trim().length > 2 && Number(form.age) > 0 : step === 1 ? form.phone.trim().length >= 10 : true;
+    step === 0
+      ? form.name.trim().length > 2 &&
+        Number(form.age) > 0 &&
+        (!isOldPatient || (form.regNo.trim().length > 0 && !existingPatient))
+      : step === 1
+        ? form.phone.trim().length >= 10
+        : true;
 
   const handleSendWhatsApp = (targetPatient?: Patient | null) => {
     const p = targetPatient ?? created;
@@ -77,19 +100,62 @@ function RegisterPatient() {
   };
 
   const submit = () => {
-    const patient = addPatient({
-      name: form.name.trim(),
-      age: Number(form.age),
-      gender: form.gender,
-      phone: form.phone.trim(),
-      email: form.email.trim(),
-      address: form.address.trim(),
-      bloodGroup: form.bloodGroup,
-      allergies: form.allergies,
-      occupation: form.occupation.trim(),
-    });
-    setCreated(patient);
-    toast.success(`Patient registered as ${patient.regNo}`);
+    if (saving) return;
+
+    if (isOldPatient && !form.regNo.trim()) {
+      toast.error("Please enter the patient's existing Registration Number");
+      setStep(0);
+      return;
+    }
+    if (isOldPatient && existingPatient) {
+      toast.error(`A patient is already registered with Reg No: ${form.regNo.trim()}`);
+      setStep(0);
+      return;
+    }
+
+    if (!form.name.trim()) {
+      toast.error("Please enter the patient's name");
+      setStep(0);
+      return;
+    }
+    if (!form.age || Number(form.age) <= 0) {
+      toast.error("Please enter a valid age");
+      setStep(0);
+      return;
+    }
+    if (!form.phone.trim() || form.phone.trim().length < 10) {
+      toast.error("Please enter a valid 10-digit mobile number");
+      setStep(1);
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const patient = addPatient({
+        regNo: form.regNo.trim() || undefined,
+        registeredOn: isOldPatient && form.registeredOn ? form.registeredOn : undefined,
+        name: form.name.trim(),
+        age: Number(form.age) || 0,
+        gender: form.gender,
+        phone: form.phone.trim(),
+        email: form.email.trim(),
+        address: form.address.trim(),
+        bloodGroup: form.bloodGroup,
+        allergies: form.allergies,
+        occupation: form.occupation.trim(),
+      });
+      setCreated(patient);
+      toast.success(
+        isOldPatient
+          ? `Old patient ${patient.name} recorded with Reg No: ${patient.regNo}`
+          : `Patient registered as ${patient.regNo}`
+      );
+    } catch (err: unknown) {
+      console.error("[RegisterPatient] Error saving patient:", err);
+      toast.error(err instanceof Error ? err.message : "Failed to save patient. Please check all fields.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   if (created) {
@@ -97,7 +163,9 @@ function RegisterPatient() {
       <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} className="mx-auto max-w-lg">
         <div className="card-soft p-10 text-center">
           <CheckCircle2 className="mx-auto h-14 w-14 text-success" strokeWidth={1.4} />
-          <h1 className="mt-5 font-display text-3xl">Patient registered</h1>
+          <h1 className="mt-5 font-display text-3xl">
+            {isOldPatient ? "Old patient recorded" : "Patient registered"}
+          </h1>
           <p className="mt-2 text-sm text-muted-foreground">{created.name} has been added to the clinic records.</p>
           <div className="mt-6 inline-flex flex-col items-center rounded-2xl bg-primary-soft px-8 py-5">
             <span className="text-xs uppercase tracking-[0.2em] text-primary-soft-foreground/70">Registration No.</span>
@@ -105,6 +173,8 @@ function RegisterPatient() {
           </div>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <WhatsAppButton
+              label="Send WhatsApp"
+              isPdf={false}
               onClick={() => handleSendWhatsApp(created)}
             />
             <Button asChild className="rounded-xl">
@@ -123,7 +193,19 @@ function RegisterPatient() {
               onClick={() => {
                 setCreated(null);
                 setStep(0);
-                setForm({ ...form, name: "", age: "", phone: "", email: "", address: "", allergies: [], occupation: "" });
+                setForm({
+                  regNo: "",
+                  registeredOn: todayISO(),
+                  name: "",
+                  age: "",
+                  gender: "Female",
+                  phone: "",
+                  email: "",
+                  address: "",
+                  bloodGroup: "O+",
+                  allergies: [],
+                  occupation: "",
+                });
               }}
             >
               Register another
@@ -137,16 +219,87 @@ function RegisterPatient() {
   return (
     <>
       <PageTitle
-        title="Register patient"
-        subtitle="A registration number is generated automatically"
+        title={isOldPatient ? "Register Old Patient" : "Register patient"}
+        subtitle={
+          isOldPatient
+            ? "Enter past paper-card registration number and existing hospital records"
+            : "A registration number is generated automatically"
+        }
         action={
-          <Badge variant="outline" className="rounded-xl border-gold/40 bg-gold-soft px-3 py-1.5 text-gold-foreground">
-            Next: {nextRegNo()}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant={isOldPatient ? "default" : "outline"}
+              className={cn(
+                "rounded-xl h-9 font-medium",
+                isOldPatient
+                  ? "bg-amber-600 hover:bg-amber-700 text-white border-amber-600 shadow-sm"
+                  : "border-border hover:bg-secondary text-foreground"
+              )}
+              onClick={() => {
+                setIsOldPatient((p) => !p);
+                setStep(0);
+              }}
+            >
+              <History className="mr-1.5 h-4 w-4" />
+              {isOldPatient ? "Switch to New Patient" : "Register Old Patient"}
+            </Button>
+            {!isOldPatient && (
+              <Badge variant="outline" className="rounded-xl border-gold/40 bg-gold-soft px-3 py-1.5 text-gold-foreground h-9 flex items-center">
+                Next: {nextRegNo()}
+              </Badge>
+            )}
+          </div>
         }
       />
 
-      <div className="mx-auto max-w-3xl card-soft p-6 md:p-8">
+      <div className="mx-auto max-w-3xl card-soft p-6 md:p-8 pb-12 md:pb-8">
+        {/* Registration Mode Selector */}
+        <div className="mb-6 flex rounded-xl bg-secondary/80 p-1">
+          <button
+            type="button"
+            onClick={() => {
+              setIsOldPatient(false);
+              setStep(0);
+            }}
+            className={cn(
+              "flex flex-1 items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-semibold transition-all",
+              !isOldPatient ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <UserPlus className="h-4 w-4 text-primary" />
+            New Patient (Auto Reg No)
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsOldPatient(true);
+              setStep(0);
+            }}
+            className={cn(
+              "flex flex-1 items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-semibold transition-all",
+              isOldPatient
+                ? "bg-amber-600 text-white shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <History className="h-4 w-4" />
+            Register Old Patient (Existing Paper Reg No)
+          </button>
+        </div>
+
+        {isOldPatient && (
+          <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3.5 text-amber-900 dark:text-amber-200">
+            <History className="h-5 w-5 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+            <div className="text-xs space-y-0.5">
+              <span className="font-semibold text-sm">Old Patient Entry Mode (Physical File Migration)</span>
+              <p className="text-muted-foreground dark:text-amber-300/80">
+                Enter the historical Registration Number printed on the patient's existing card or paper file to preserve medical history and continuity.
+              </p>
+            </div>
+          </div>
+        )}
+
         <div className="mb-8 flex items-center">
           {STEPS.map((label, i) => (
             <div key={label} className="flex flex-1 items-center last:flex-none">
@@ -183,6 +336,67 @@ function RegisterPatient() {
           >
             {step === 0 && (
               <>
+                {isOldPatient ? (
+                  <>
+                    <div className="space-y-2 sm:col-span-2 rounded-xl border-2 border-amber-500/40 bg-amber-500/5 p-4">
+                      <div className="flex items-center justify-between">
+                        <Label htmlFor="regNo" className="font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-1.5">
+                          <History className="h-4 w-4 text-amber-600" /> Existing Hospital Registration Number <span className="text-destructive">*</span>
+                        </Label>
+                        <Badge variant="outline" className="border-amber-500/40 text-amber-700 dark:text-amber-300 text-[10px]">
+                          Required
+                        </Badge>
+                      </div>
+                      <Input
+                        id="regNo"
+                        autoFocus
+                        value={form.regNo}
+                        onChange={(e) => set("regNo", e.target.value)}
+                        placeholder="Enter existing Reg No. (e.g. 2024-0012, AHH-2023-88, or old card no.)"
+                        className="font-medium bg-background text-sm"
+                      />
+                      {existingPatient && (
+                        <div className="flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive mt-2">
+                          <AlertCircle className="h-4 w-4 shrink-0" />
+                          <span>Patient <strong>{existingPatient.name}</strong> is already registered with Reg No: <strong>{form.regNo}</strong>.</span>
+                          <Link to="/patients/$id" params={{ id: existingPatient.id }} className="underline font-semibold ml-auto">
+                            View profile
+                          </Link>
+                        </div>
+                      )}
+                      <p className="text-[11px] text-muted-foreground">
+                        Exact registration number written or printed on their previous hospital prescription card.
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="regDate" className="flex items-center gap-1.5">
+                        <Calendar className="h-3.5 w-3.5 text-muted-foreground" /> Original Registration Date
+                      </Label>
+                      <Input
+                        id="regDate"
+                        type="date"
+                        max={todayISO()}
+                        value={form.registeredOn}
+                        onChange={(e) => set("registeredOn", e.target.value)}
+                      />
+                      <p className="text-[11px] text-muted-foreground">When the patient first visited the hospital</p>
+                    </div>
+                  </>
+                ) : (
+                  <div className="space-y-2 sm:col-span-2">
+                    <div className="flex items-center justify-between">
+                      <Label htmlFor="regNo">Registration Number</Label>
+                      <span className="text-xs text-muted-foreground">Optional · Leave blank to auto-generate ({nextRegNo()})</span>
+                    </div>
+                    <Input
+                      id="regNo"
+                      value={form.regNo}
+                      onChange={(e) => set("regNo", e.target.value)}
+                      placeholder={`e.g. ${nextRegNo()} or past card/file number`}
+                    />
+                  </div>
+                )}
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="name">Full name</Label>
                   <Input id="name" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. Kavitha Murugan" />
@@ -290,23 +504,34 @@ function RegisterPatient() {
           </motion.div>
         </AnimatePresence>
 
-        <div className="mt-8 flex justify-between">
-          <Button variant="ghost" disabled={step === 0} onClick={() => setStep((s) => s - 1)}>
+        <div className="mt-8 flex justify-between gap-3 pt-2">
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={step === 0 || saving}
+            onClick={() => setStep((s) => s - 1)}
+            className="rounded-xl h-11 sm:h-10 px-4 min-h-[44px]"
+          >
             <ChevronLeft className="mr-1 h-4 w-4" /> Back
           </Button>
           {step < STEPS.length - 1 ? (
-            <Button className="rounded-xl" disabled={!stepValid} onClick={() => setStep((s) => s + 1)}>
+            <Button
+              type="button"
+              className="rounded-xl h-11 sm:h-10 px-5 min-h-[44px]"
+              disabled={!stepValid || saving}
+              onClick={() => setStep((s) => s + 1)}
+            >
               Continue <ChevronRight className="ml-1 h-4 w-4" />
             </Button>
           ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button className="rounded-xl" onClick={submit}>
-                Save Patient
-              </Button>
-              <WhatsAppButton
-                onClick={() => handleSendWhatsApp()}
-              />
-            </div>
+            <Button
+              type="button"
+              className="rounded-xl h-11 sm:h-10 px-6 min-h-[44px] font-semibold text-base sm:text-sm active:scale-[0.98] transition-transform"
+              disabled={saving}
+              onClick={submit}
+            >
+              {saving ? "Saving..." : "Save Patient"}
+            </Button>
           )}
         </div>
       </div>

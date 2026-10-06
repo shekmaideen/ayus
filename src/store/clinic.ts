@@ -25,16 +25,16 @@ import type {
   Role,
   Template,
   Visit,
+  ChiefComplaint,
 } from "@/data/types";
 import { todayISO } from "@/lib/format";
+import { uid } from "@/lib/utils";
 
 // ─── Lazy import of server functions (server-side only) ───────────
 // We import these lazily to avoid circular deps; they are only called
 // from server function context anyway.
 const sf = () => import("@/lib/clinic.functions");
 
-const crypto = globalThis.crypto;
-const uid = () => crypto.randomUUID();
 
 /* ---------- row mappers (MySQL snake_case → app camelCase) --------- */
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -48,13 +48,21 @@ const toVisit = (r: any): Visit => ({
   id: r.id, patientId: r.patientId ?? r.patient_id, date: r.date, type: r.type,
   complaint: r.complaint, notes: r.notes,
 });
+const toChiefComplaint = (r: any): ChiefComplaint => ({
+  id: r.id,
+  patientId: r.patientId ?? r.patient_id,
+  visitId: r.visitId ?? r.visit_id ?? null,
+  complaint: r.complaint,
+  createdAt: r.createdAt ?? r.created_at,
+  updatedAt: r.updatedAt ?? r.updated_at ?? null,
+});
 const toMedicine = (r: any): Medicine => ({
   id: r.id,
   name: r.name,
-  brand: r.brand ?? "Standard",
-  potency: r.potency ?? (r.potencies?.[0] ?? "30CH"),
-  formType: r.formType ?? r.form_type ?? "Globules",
-  potencies: r.potencies ?? [r.potency ?? "30CH"],
+  brand: r.brand ?? "",
+  potency: r.potency ?? (r.potencies?.[0] ?? ""),
+  formType: r.formType ?? r.form_type ?? "Bottle",
+  potencies: r.potencies ?? (r.potency ? [r.potency] : []),
   stock: Number(r.stock ?? 0),
   price: Number(r.price ?? 0),
   active: r.active !== undefined ? Boolean(r.active) : true,
@@ -91,7 +99,7 @@ const toSettings = (r: any): ClinicSettings => ({
 
 const DEFAULT_SETTINGS: ClinicSettings = {
   consultationFee: 400, followUpFee: 250, registrationFee: 100, lowStockThreshold: 10,
-  clinicName: "HomeoCare Clinic", address: "", phone: "", doctorName: "", logoDataUrl: null,
+  clinicName: "Dr. Ayus Homoeopathy Hospital", address: "", phone: "", doctorName: "", logoDataUrl: null,
 };
 
 /** Run a server fn; on failure show toast and reload fresh data. */
@@ -122,6 +130,7 @@ interface ClinicState {
   patients: Patient[];
   caseHistories: Record<string, CaseHistory>;
   visits: Visit[];
+  chiefComplaints: ChiefComplaint[];
   medicines: Medicine[];
   prescriptions: Prescription[];
   bills: Bill[];
@@ -135,10 +144,14 @@ interface ClinicState {
   setAuth: (payload: { userId: string; role: Role; userName: string }) => void;
 
   nextRegNo: () => string;
-  addPatient: (p: Omit<Patient, "id" | "regNo" | "registeredOn" | "active">) => Patient;
+  addPatient: (p: Omit<Patient, "id" | "regNo" | "registeredOn" | "active"> & { regNo?: string | undefined; registeredOn?: string | undefined }) => Patient;
   updatePatient: (id: string, patch: Partial<Patient>) => void;
   saveCaseHistory: (patientId: string, ch: CaseHistory) => void;
   addVisit: (v: Omit<Visit, "id">) => Visit;
+
+  addChiefComplaint: (data: { patientId: string; visitId?: string | null; complaint: string; createdAt?: string | undefined }) => ChiefComplaint;
+  updateChiefComplaint: (id: string, patch: { complaint?: string | undefined; visitId?: string | null; createdAt?: string | undefined } | string) => void;
+  deleteChiefComplaint: (id: string) => void;
 
   addMedicine: (m: Omit<Medicine, "id">) => void;
   updateMedicine: (id: string, patch: Partial<Medicine>) => void;
@@ -155,6 +168,16 @@ interface ClinicState {
     date?: string;
   }) => { prescription: Prescription; bill: Bill };
 
+  updatePrescription: (
+    id: string,
+    patch: {
+      items?: PrescriptionItem[];
+      followUpDate?: string | null;
+      notes?: string;
+      date?: string;
+    }
+  ) => void;
+
   saveTemplate: (name: string, items: PrescriptionItem[]) => void;
 
   updateBill: (id: string, patch: Partial<Bill>) => void;
@@ -170,9 +193,16 @@ export const billTotal = (b: Bill) => b.items.reduce((s, i) => s + i.qty * i.rat
 
 const empty = {
   role: null, loggedIn: false, loaded: false, userId: null, userName: "",
-  patients: [], caseHistories: {}, visits: [], medicines: [], prescriptions: [],
+  patients: [], caseHistories: {}, visits: [], chiefComplaints: [], medicines: [], prescriptions: [],
   bills: [], followUps: [], settings: DEFAULT_SETTINGS, templates: [],
 };
+
+export function getStoredToken(): string | null {
+  if (typeof window === "undefined") return null;
+  const sessionToken = sessionStorage.getItem("hc_token");
+  if (sessionToken && sessionToken.trim()) return sessionToken.trim();
+  return null;
+}
 
 // ─────────────────────────────────────────────────────────────────
 // Store
@@ -189,35 +219,44 @@ export const useClinic = create<ClinicState>()(
 
       // Load all clinic data from MySQL via server function
       loadAll: async () => {
-        const token = sessionStorage.getItem("hc_token");
+        const token = getStoredToken();
         if (!token) { set({ ...empty, loaded: true }); return; }
         try {
           const { loadClinicData } = await sf();
-          const d = (await loadClinicData()) as any;
+          // Timeout after 8 seconds so the UI never hangs indefinitely
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("Loading clinic data timed out after 8s")), 8000),
+          );
+          const d = (await Promise.race([loadClinicData(), timeoutPromise])) as any;
           set({
             loggedIn: true,
             loaded: true,
             userId: d.me.id,
             role: d.me.role as Role,
             userName: d.me.fullName,
-            patients:      d.pats.map(toPatient),
-            caseHistories: Object.fromEntries(d.chs.map((c: any) => [c.patientId, c.data as unknown as CaseHistory])),
-            visits:        d.vis.map(toVisit),
-            medicines:     d.meds.map(toMedicine),
-            prescriptions: d.pres.map(toPrescription),
-            bills:         d.bls.map(toBill),
-            followUps:     d.fus.map(toFollowUp),
-            templates:     d.tpls.map((t: any) => ({ id: t.id, name: t.name, items: t.items as Template["items"] })),
-            settings:      d.settings ? toSettings(d.settings) : DEFAULT_SETTINGS,
+            patients:        d.pats.map(toPatient),
+            caseHistories:   Object.fromEntries(d.chs.map((c: any) => [c.patientId, c.data as unknown as CaseHistory])),
+            visits:          d.vis.map(toVisit),
+            chiefComplaints: (d.ccs ?? []).map(toChiefComplaint),
+            medicines:       d.meds.map(toMedicine),
+            prescriptions:   d.pres.map(toPrescription),
+            bills:           d.bls.map(toBill),
+            followUps:       d.fus.map(toFollowUp),
+            templates:       d.tpls.map((t: any) => ({ id: t.id, name: t.name, items: t.items as Template["items"] })),
+            settings:        d.settings ? toSettings(d.settings) : DEFAULT_SETTINGS,
           });
-        } catch {
-          set({ ...empty, loaded: true });
+        } catch (err) {
+          console.error("[loadAll] Error loading clinic data:", err);
+          const wasLoggedIn = get().loggedIn;
+          set({ loaded: true, ...(wasLoggedIn ? {} : { ...empty, loaded: true }) });
         }
       },
 
       clear: () => {
-        sessionStorage.removeItem("hc_token");
-        document.cookie = "hc_token=; path=/; max-age=0";
+        if (typeof window !== "undefined") {
+          sessionStorage.removeItem("hc_token");
+          document.cookie = "hc_token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; max-age=0";
+        }
         set({ ...empty, loaded: true });
       },
 
@@ -239,7 +278,8 @@ export const useClinic = create<ClinicState>()(
       },
 
       addPatient: (p) => {
-        const patient: Patient = { ...p, id: uid(), regNo: get().nextRegNo(), registeredOn: todayISO(), active: true };
+        const customReg = p.regNo && p.regNo.trim();
+        const patient: Patient = { ...p, id: uid(), regNo: customReg || get().nextRegNo(), registeredOn: todayISO(), active: true };
         set((s) => ({ patients: [patient, ...s.patients] }));
         save(sf().then((m) => m.insertPatient({ data: patient })));
         return patient;
@@ -259,7 +299,48 @@ export const useClinic = create<ClinicState>()(
         const visit: Visit = { ...v, id: uid() };
         set((s) => ({ visits: [visit, ...s.visits] }));
         save(sf().then((m) => m.insertVisit({ data: { id: visit.id, patientId: v.patientId, date: v.date, type: v.type, complaint: v.complaint, notes: v.notes } })));
+        if (v.complaint && v.complaint.trim() && v.complaint !== "Consultation") {
+          get().addChiefComplaint({ patientId: v.patientId, visitId: visit.id, complaint: v.complaint.trim() });
+        }
         return visit;
+      },
+
+      addChiefComplaint: ({ patientId, visitId, complaint, createdAt }) => {
+        const now = createdAt || new Date().toISOString().slice(0, 19).replace("T", " ");
+        const item: ChiefComplaint = {
+          id: uid(),
+          patientId,
+          visitId: visitId || null,
+          complaint: complaint.trim(),
+          createdAt: now,
+          updatedAt: null,
+        };
+        set((s) => ({ chiefComplaints: [item, ...s.chiefComplaints] }));
+        save(sf().then((m) => m.insertChiefComplaint({ data: item })));
+        return item;
+      },
+
+      updateChiefComplaint: (id, patchOrComplaint) => {
+        const patch = typeof patchOrComplaint === "string" ? { complaint: patchOrComplaint.trim() } : patchOrComplaint;
+        const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+        set((s) => ({
+          chiefComplaints: s.chiefComplaints.map((c) => {
+            if (c.id !== id) return c;
+            const updated: ChiefComplaint = { ...c, updatedAt: now };
+            if (patch.complaint !== undefined) updated.complaint = patch.complaint;
+            if (patch.visitId !== undefined) updated.visitId = patch.visitId;
+            if (patch.createdAt !== undefined) updated.createdAt = patch.createdAt;
+            return updated;
+          }),
+        }));
+        save(sf().then((m) => m.updateChiefComplaint({ data: { id, ...patch } })));
+      },
+
+      deleteChiefComplaint: (id) => {
+        set((s) => ({
+          chiefComplaints: s.chiefComplaints.filter((c) => c.id !== id),
+        }));
+        save(sf().then((m) => m.deleteChiefComplaint({ data: { id } })));
       },
 
       addMedicine: (m) => {
@@ -267,10 +348,10 @@ export const useClinic = create<ClinicState>()(
         const med: Medicine = {
           ...m,
           id: uid(),
-          brand: m.brand || "Standard",
-          potency: m.potency || "30CH",
-          formType: m.formType || "Globules",
-          potencies: m.potencies || [m.potency || "30CH"],
+          brand: m.brand || "",
+          potency: m.potency || "",
+          formType: m.formType || "Bottle",
+          potencies: m.potencies || (m.potency ? [m.potency] : []),
           createdAt: m.createdAt || now,
         };
         set((s) => ({ medicines: [med, ...s.medicines] }));
@@ -316,10 +397,11 @@ export const useClinic = create<ClinicState>()(
         if (!vid) {
           const isFirst = !state.visits.some((v) => v.patientId === patientId);
           vid = uid();
+          const latestComplaint = state.chiefComplaints.find((c) => c.patientId === patientId)?.complaint;
           newVisit = {
             id: vid, patientId, date,
             type: isFirst ? "New" : "Follow-up",
-            complaint: state.caseHistories[patientId]?.chiefComplaint ?? "Consultation",
+            complaint: latestComplaint || state.caseHistories[patientId]?.chiefComplaint || "Consultation",
             notes: isRefill ? "Refill of previous prescription" : "Prescription issued",
           };
           set((s) => ({ visits: [newVisit!, ...s.visits] }));
@@ -353,8 +435,9 @@ export const useClinic = create<ClinicState>()(
           date, items: billItems, status: "Pending", paymentMode: null, amountReceived: 0, readyForPayment: true,
         };
 
+        const latestComplaint = state.chiefComplaints.find((c) => c.patientId === patientId)?.complaint;
         const followUp: FollowUp | null = followUpDate
-          ? { id: uid(), patientId, dueDate: followUpDate, reason: state.caseHistories[patientId]?.chiefComplaint ?? `Review for ${patient.name}`, status: "Pending" }
+          ? { id: uid(), patientId, dueDate: followUpDate, reason: latestComplaint || state.caseHistories[patientId]?.chiefComplaint || `Review for ${patient.name}`, status: "Pending" }
           : null;
 
         // Note: Prescriptions and Billing do NOT change inventory stock
@@ -374,6 +457,27 @@ export const useClinic = create<ClinicState>()(
         })));
 
         return { prescription, bill };
+      },
+
+      updatePrescription: (id, patch) => {
+        set((s) => ({
+          prescriptions: s.prescriptions.map((p) =>
+            p.id === id ? { ...p, ...patch } : p
+          ),
+        }));
+        save(
+          sf().then((m) =>
+            m.updatePrescriptionFull({
+              data: {
+                id,
+                items: (patch.items ?? []) as any,
+                followUpDate: patch.followUpDate,
+                notes: patch.notes,
+                date: patch.date,
+              },
+            })
+          )
+        );
       },
 
       saveTemplate: (name, items) => {
@@ -422,7 +526,7 @@ export const useClinic = create<ClinicState>()(
         save(sf().then((m) => m.updateSettingsFn({ data: patch as any })));
       },
     }),
-    { name: "homeocare-prefs", partialize: (s) => ({ dark: s.dark }) },
+    { name: "ayus-prefs", partialize: (s) => ({ dark: s.dark }) },
   ),
 );
 

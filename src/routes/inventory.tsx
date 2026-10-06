@@ -2,10 +2,14 @@ import { createFileRoute } from "@tanstack/react-router";
 import {
   AlertTriangle,
   ArrowUpDown,
-  Building2,
   Calendar,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   Clock,
+  FileSpreadsheet,
   Layers,
   Package,
   Pencil,
@@ -15,9 +19,10 @@ import {
   Trash2,
   XCircle,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useDeferredValue } from "react";
 import { toast } from "sonner";
 import { AppShell, PageTitle } from "@/components/AppShell";
+import { MedicineExcelImportDialog } from "@/components/MedicineExcelImportDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -43,9 +48,11 @@ import {
   MEDICINE_POTENCIES,
   BOTTLE_POTENCIES,
   TABLET_POTENCIES,
+  GLOBULES_POTENCIES,
   isPotencyApplicable,
   isBrandApplicable,
   getPotencyOptions,
+  normalizeMedicinePotency,
   type Medicine,
   type MedicineFormType,
   type MedicinePotency,
@@ -54,9 +61,9 @@ import {
 export const Route = createFileRoute("/inventory")({
   head: () => ({
     meta: [
-      { title: "Inventory — HomeoCare Clinic Manager" },
+      { title: "Inventory — Dr. Ayus Homoeopathy Hospital" },
       { name: "description", content: "Homeopathic medicine stock levels, potencies, forms, and entry history." },
-      { property: "og:title", content: "Inventory — HomeoCare Clinic Manager" },
+      { property: "og:title", content: "Inventory — Dr. Ayus Homoeopathy Hospital" },
       { property: "og:description", content: "Homeopathic medicine stock levels, potencies, forms, and entry history." },
     ],
   }),
@@ -69,9 +76,9 @@ export const Route = createFileRoute("/inventory")({
 
 const defaultForm = {
   name: "",
-  brand: "Schwabe",
+  brand: "",
   formType: "Bottle" as MedicineFormType,
-  potency: "30CH",
+  potency: "Q",
   customPotency: "",
   stock: "20",
   price: "10.00",
@@ -82,11 +89,16 @@ function Inventory() {
   const editable = can(role, "inventory") === "full";
 
   const [q, setQ] = useState("");
+  const deferredQ = useDeferredValue(q);
   const [statusFilter, setStatusFilter] = useState<"all" | "in" | "low" | "out">("all");
   const [potencyFilter, setPotencyFilter] = useState<string>("all");
   const [formTypeFilter, setFormTypeFilter] = useState<string>("all");
 
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+
   const [open, setOpen] = useState(false);
+  const [excelImportOpen, setExcelImportOpen] = useState(false);
   const [editing, setEditing] = useState<Medicine | null>(null);
   const [form, setForm] = useState(defaultForm);
   const [confirm, setConfirm] = useState<Medicine | null>(null);
@@ -109,44 +121,62 @@ function Inventory() {
     return () => clearInterval(timer);
   }, [open, editing]);
 
+  // Reset to first page whenever search or filters change
+  useEffect(() => {
+    setPage(1);
+  }, [deferredQ, statusFilter, potencyFilter, formTypeFilter]);
+
   const allAvailablePotencies = useMemo(() => {
     const set = new Set<string>();
     MEDICINE_POTENCIES.forEach((p) => set.add(p));
-    medicines.forEach((m) => {
+    GLOBULES_POTENCIES.filter((p) => p !== "Other").forEach((p) => set.add(p));
+    for (const m of medicines) {
+      if (!m) continue;
       const p = (m.potency || "").trim();
       if (p && p !== "-") set.add(p);
-    });
+    }
     return Array.from(set);
   }, [medicines]);
 
   const rows = useMemo(() => {
-    const t = q.trim().toLowerCase();
-    return medicines
-      .filter((m) => {
-        if (!t) return true;
-        return (
+    const t = deferredQ.trim().toLowerCase();
+    const hasStatus = statusFilter !== "all";
+    const hasPotency = potencyFilter !== "all";
+    const hasForm = formTypeFilter !== "all";
+    const threshold = settings.lowStockThreshold;
+
+    const filtered = medicines.filter((m) => {
+      if (t) {
+        const matchesText =
           m.name.toLowerCase().includes(t) ||
-          m.brand.toLowerCase().includes(t) ||
           m.potency.toLowerCase().includes(t) ||
-          m.formType.toLowerCase().includes(t)
-        );
-      })
-      .filter((m) => {
-        if (statusFilter === "low") return m.stock > 0 && m.stock < settings.lowStockThreshold;
-        if (statusFilter === "out") return m.stock === 0;
-        if (statusFilter === "in") return m.stock >= settings.lowStockThreshold;
-        return true;
-      })
-      .filter((m) => {
-        if (potencyFilter === "all") return true;
-        return m.potency === potencyFilter;
-      })
-      .filter((m) => {
-        if (formTypeFilter === "all") return true;
-        return m.formType === formTypeFilter;
-      })
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [medicines, q, statusFilter, potencyFilter, formTypeFilter, settings.lowStockThreshold]);
+          m.formType.toLowerCase().includes(t) ||
+          m.brand.toLowerCase().includes(t);
+        if (!matchesText) return false;
+      }
+      if (hasStatus) {
+        if (statusFilter === "low" && !(m.stock > 0 && m.stock < threshold)) return false;
+        if (statusFilter === "out" && m.stock !== 0) return false;
+        if (statusFilter === "in" && m.stock < threshold) return false;
+      }
+      if (hasPotency && m.potency !== potencyFilter) return false;
+      if (hasForm && m.formType !== formTypeFilter) return false;
+      return true;
+    });
+
+    return filtered.sort((a, b) => {
+      const aN = a.name.toLowerCase();
+      const bN = b.name.toLowerCase();
+      return aN < bN ? -1 : aN > bN ? 1 : 0;
+    });
+  }, [medicines, deferredQ, statusFilter, potencyFilter, formTypeFilter, settings.lowStockThreshold]);
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const paginatedRows = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return rows.slice(start, start + pageSize);
+  }, [rows, currentPage, pageSize]);
 
   const openNew = () => {
     setEditing(null);
@@ -169,13 +199,13 @@ function Inventory() {
         pot = "Other";
         custom = m.potency;
       } else {
-        pot = formType === "Tablet" ? "3X" : "30CH";
+        pot = formType === "Tablet" ? "None" : formType === "Globules" ? "1 drum" : "Q";
       }
     }
 
     setForm({
       name: m.name,
-      brand: isBrandApplicable(formType) ? (m.brand || "Schwabe") : "",
+      brand: m.brand || "",
       formType,
       potency: pot,
       customPotency: custom,
@@ -191,8 +221,8 @@ function Inventory() {
       setForm((prev) => ({
         ...prev,
         formType: newType,
-        brand: prev.brand && prev.brand.trim() !== "" ? prev.brand : "Schwabe",
-        potency: isCurrentValid ? prev.potency : "30CH",
+        brand: "",
+        potency: isCurrentValid ? prev.potency : "Q",
       }));
     } else if (newType === "Tablet") {
       const isCurrentValid = (TABLET_POTENCIES as readonly string[]).includes(form.potency);
@@ -200,7 +230,15 @@ function Inventory() {
         ...prev,
         formType: newType,
         brand: "",
-        potency: isCurrentValid ? prev.potency : "3X",
+        potency: isCurrentValid ? prev.potency : "None",
+      }));
+    } else if (newType === "Globules") {
+      const isCurrentValid = (GLOBULES_POTENCIES as readonly string[]).includes(form.potency);
+      setForm((prev) => ({
+        ...prev,
+        formType: newType,
+        brand: "",
+        potency: isCurrentValid ? prev.potency : "1 drum",
       }));
     } else {
       // For other form/type: neither potency nor brand appear!
@@ -226,24 +264,21 @@ function Inventory() {
       toast.error("Medicine Name is required");
       return;
     }
-    if (isBrandApplicable(form.formType) && !form.brand.trim()) {
-      toast.error("Medicine Brand Name is required for Bottle");
-      return;
-    }
-
-    const finalBrand = isBrandApplicable(form.formType) ? form.brand.trim() : "";
+    const finalBrand = form.brand ? form.brand.trim() : "";
 
     let finalPotency = "";
     if (isPotencyApplicable(form.formType)) {
       if (form.potency === "Other") {
         finalPotency = form.customPotency.trim();
-        if (!finalPotency) {
+        if (!finalPotency && form.formType !== "Tablet") {
           toast.error(`Please type a manual potency for ${form.formType}`);
           return;
         }
+      } else if (form.potency === "None") {
+        finalPotency = "";
       } else {
         finalPotency = form.potency.trim();
-        if (!finalPotency) {
+        if (!finalPotency && form.formType !== "Tablet") {
           toast.error(`Please select a potency for ${form.formType}`);
           return;
         }
@@ -252,6 +287,7 @@ function Inventory() {
       // Other forms: potency does not appear
       finalPotency = "";
     }
+    finalPotency = normalizeMedicinePotency(finalPotency);
 
     const numStock = Number(form.stock);
     if (isNaN(numStock) || numStock < 0) {
@@ -279,14 +315,11 @@ function Inventory() {
       const exists = medicines.some(
         (m) =>
           m.name.toLowerCase() === form.name.trim().toLowerCase() &&
-          (isBrandApplicable(form.formType)
-            ? (m.brand || "").toLowerCase() === finalBrand.toLowerCase()
-            : true) &&
           (m.potency || "").trim().toLowerCase() === finalPotency.toLowerCase() &&
           m.formType.toLowerCase() === form.formType.toLowerCase(),
       );
       if (exists) {
-        toast.error("This medicine variant (same name, brand, potency, and form) already exists in inventory.");
+        toast.error("This medicine variant (same name, potency, and form) already exists in inventory.");
         return;
       }
 
@@ -346,9 +379,19 @@ function Inventory() {
         subtitle={`${medicines.length} medicine variants · ${lowCount} low stock · ${outCount} out of stock`}
         action={
           editable ? (
-            <Button className="rounded-xl shadow-sm" onClick={openNew}>
-              <Plus className="mr-2 h-4 w-4" /> Add medicine
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                className="rounded-xl shadow-sm gap-2"
+                onClick={() => setExcelImportOpen(true)}
+                id="btn-inventory-import-excel"
+              >
+                <FileSpreadsheet className="h-4 w-4 text-emerald-600" /> Import Excel
+              </Button>
+              <Button className="rounded-xl shadow-sm" onClick={openNew}>
+                <Plus className="mr-2 h-4 w-4" /> Add medicine
+              </Button>
+            </div>
           ) : (
             <Badge variant="outline">View only</Badge>
           )
@@ -364,7 +407,7 @@ function Inventory() {
               <Input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Search by medicine, brand, potency, or form..."
+                placeholder="Search by medicine, potency, or form..."
                 className="rounded-xl pl-9"
               />
             </div>
@@ -417,7 +460,6 @@ function Inventory() {
               <thead className="border-b bg-muted/30 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 <tr>
                   <th className="px-4 py-3.5">Medicine Name</th>
-                  <th className="px-4 py-3.5">Brand</th>
                   <th className="px-3 py-3.5">Potency</th>
                   <th className="px-3 py-3.5">Form / Type</th>
                   <th className="px-4 py-3.5 text-right">Stock</th>
@@ -431,7 +473,7 @@ function Inventory() {
               <tbody className="divide-y divide-border/60">
                 {rows.length === 0 ? (
                   <tr>
-                    <td colSpan={editable ? 10 : 9} className="py-16 text-center">
+                    <td colSpan={editable ? 9 : 8} className="py-16 text-center">
                       <div className="flex flex-col items-center gap-2">
                         <Package className="h-10 w-10 text-muted-foreground/60" strokeWidth={1.3} />
                         <p className="font-medium text-foreground">No medicines found</p>
@@ -440,7 +482,7 @@ function Inventory() {
                     </td>
                   </tr>
                 ) : (
-                  rows.map((m) => {
+                  paginatedRows.map((m) => {
                     const isOut = m.stock === 0;
                     const isLow = m.stock > 0 && m.stock < settings.lowStockThreshold;
                     const entry = formatStockEntryDateTime(m.createdAt);
@@ -450,18 +492,6 @@ function Inventory() {
                         {/* Medicine Name */}
                         <td className="px-4 py-3">
                           <p className="font-semibold text-foreground">{m.name}</p>
-                        </td>
-
-                        {/* Brand (only for Bottle) */}
-                        <td className="px-4 py-3 text-muted-foreground">
-                          {isBrandApplicable(m.formType) && m.brand && m.brand.trim() !== "" ? (
-                            <span className="inline-flex items-center gap-1.5 font-medium text-foreground/90">
-                              <Building2 className="h-3.5 w-3.5 text-muted-foreground/70" />
-                              {m.brand}
-                            </span>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
                         </td>
 
                         {/* Potency */}
@@ -567,6 +597,92 @@ function Inventory() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination Toolbar */}
+          {rows.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <span>Showing</span>
+                <span className="font-semibold text-foreground">
+                  {Math.min((currentPage - 1) * pageSize + 1, rows.length)} – {Math.min(currentPage * pageSize, rows.length)}
+                </span>
+                <span>of</span>
+                <span className="font-semibold text-foreground">{rows.length}</span>
+                <span>medicines</span>
+              </div>
+
+              <div className="flex items-center gap-3 sm:gap-5">
+                <div className="flex items-center gap-1.5">
+                  <span className="hidden sm:inline">Rows per page:</span>
+                  <Select
+                    value={String(pageSize)}
+                    onValueChange={(v) => {
+                      setPageSize(Number(v));
+                      setPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="h-8 w-18 rounded-lg text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="25">25</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                      <SelectItem value="100">100</SelectItem>
+                      <SelectItem value="200">200</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 w-8 p-0 rounded-lg"
+                    onClick={() => setPage(1)}
+                    disabled={currentPage <= 1}
+                    title="First page"
+                  >
+                    <ChevronsLeft className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 w-8 p-0 rounded-lg sm:w-auto sm:px-2.5"
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={currentPage <= 1}
+                    title="Previous page"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5 sm:mr-1" />
+                    <span className="hidden sm:inline text-xs">Prev</span>
+                  </Button>
+                  <span className="px-2 font-medium text-foreground whitespace-nowrap">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 w-8 p-0 rounded-lg sm:w-auto sm:px-2.5"
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={currentPage >= totalPages}
+                    title="Next page"
+                  >
+                    <span className="hidden sm:inline text-xs">Next</span>
+                    <ChevronRight className="h-3.5 w-3.5 sm:ml-1" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 w-8 p-0 rounded-lg"
+                    onClick={() => setPage(totalPages)}
+                    disabled={currentPage >= totalPages}
+                    title="Last page"
+                  >
+                    <ChevronsRight className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -614,44 +730,42 @@ function Inventory() {
               </Select>
             </div>
 
-            {/* 9. Medicine Brand Name (ONLY for Bottle) */}
-            {isBrandApplicable(form.formType) && (
-              <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-200">
-                <Label htmlFor="m-brand" className="text-xs font-medium">
-                  Medicine Brand Name <span className="text-destructive">*</span>
-                </Label>
-                <Input
-                  id="m-brand"
-                  value={form.brand}
-                  onChange={(e) => setForm({ ...form, brand: e.target.value })}
-                  placeholder="e.g. Schwabe, SBL, Dr. Reckeweg"
-                  className="rounded-xl"
-                  autoFocus={!form.brand}
-                />
-              </div>
-            )}
-
             {/* 2. Potency (Conditionally rendered: ONLY appears if Form/Type is Bottle or Tablet) */}
             {isPotencyApplicable(form.formType) && (
               <div className="space-y-2 rounded-xl border border-primary/20 bg-primary-soft/30 p-3 animate-in fade-in slide-in-from-top-1 duration-200">
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs font-medium">
-                      Potency for {form.formType} <span className="text-destructive">*</span>
+                      Potency for {form.formType}{" "}
+                      {form.formType === "Tablet" ? (
+                        <span className="text-muted-foreground font-normal">(Optional)</span>
+                      ) : (
+                        <span className="text-destructive">*</span>
+                      )}
                     </Label>
-                    <span className="text-[10px] text-muted-foreground">Select option or choose Other</span>
+                    <span className="text-[10px] text-muted-foreground">
+                      {form.formType === "Tablet"
+                        ? "Optional — select or leave blank"
+                        : "Select option or choose Other"}
+                    </span>
                   </div>
                   <Select
                     value={form.potency}
                     onValueChange={(v) => setForm({ ...form, potency: v })}
                   >
                     <SelectTrigger className="rounded-xl bg-background">
-                      <SelectValue placeholder="Select Potency" />
+                      <SelectValue
+                        placeholder={form.formType === "Tablet" ? "None / Optional" : "Select Potency"}
+                      />
                     </SelectTrigger>
                     <SelectContent>
                       {getPotencyOptions(form.formType).map((p) => (
                         <SelectItem key={p} value={p}>
-                          {p === "Other" ? "Other (to type manually)" : p}
+                          {p === "Other"
+                            ? "Other (to type manually)"
+                            : p === "None"
+                            ? "None (No Potency)"
+                            : p}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -661,13 +775,24 @@ function Inventory() {
                 {form.potency === "Other" && (
                   <div className="space-y-1.5 pt-1 animate-in fade-in duration-150">
                     <Label htmlFor="m-custom-potency" className="text-[11px] font-medium text-foreground">
-                      Type Manual Potency <span className="text-destructive">*</span>
+                      Type Manual Potency{" "}
+                      {form.formType === "Tablet" ? (
+                        <span className="text-muted-foreground font-normal">(Optional)</span>
+                      ) : (
+                        <span className="text-destructive">*</span>
+                      )}
                     </Label>
                     <Input
                       id="m-custom-potency"
                       value={form.customPotency}
                       onChange={(e) => setForm({ ...form, customPotency: e.target.value })}
-                      placeholder={form.formType === "Tablet" ? "e.g. 12X, 30X, 200X..." : "e.g. 10M, 50M, CM, Mother Tincture..."}
+                      placeholder={
+                        form.formType === "Tablet"
+                          ? "e.g. 12X, 30X, 200X..."
+                          : form.formType === "Globules"
+                          ? "e.g. 1 drum, 2 drum, 3 drum, size 40..."
+                          : "e.g. 10M, 50M, CM, Mother Tincture..."
+                      }
                       className="rounded-xl bg-background font-mono text-xs"
                       autoFocus
                     />
@@ -750,6 +875,12 @@ function Inventory() {
         </DialogContent>
       </Dialog>
 
+      {/* Excel Medications Import Dialog */}
+      <MedicineExcelImportDialog
+        open={excelImportOpen}
+        onOpenChange={setExcelImportOpen}
+      />
+
       {/* Adjust Stock Dialog (Requirement 16) */}
       <Dialog open={!!adjustModal} onOpenChange={(o) => !o && setAdjustModal(null)}>
         <DialogContent className="max-w-md rounded-2xl p-6">
@@ -762,9 +893,8 @@ function Inventory() {
               <div className="rounded-xl bg-primary-soft p-3.5 text-xs text-primary-soft-foreground space-y-1">
                 <p className="font-semibold text-sm">{adjustModal.name}</p>
                 <p className="text-muted-foreground">
-                  {adjustModal.brand}
-                  {adjustModal.potency && adjustModal.potency.trim() !== "" && adjustModal.potency !== "-" ? ` · ${adjustModal.potency}` : ""}
-                  {` · ${adjustModal.formType}`}
+                  {adjustModal.potency && adjustModal.potency.trim() !== "" && adjustModal.potency !== "-" ? `${adjustModal.potency} · ` : ""}
+                  {adjustModal.formType}
                 </p>
                 <p className="pt-1 font-mono">Current Stock: <strong>{adjustModal.stock} units</strong></p>
               </div>

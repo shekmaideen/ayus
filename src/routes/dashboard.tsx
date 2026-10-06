@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useMemo } from "react";
 import { format, isSameMonth, parseISO, subDays } from "date-fns";
 import {
   AlertTriangle,
@@ -39,9 +40,9 @@ import { formatDate, initials, inr, todayISO } from "@/lib/format";
 export const Route = createFileRoute("/dashboard")({
   head: () => ({
     meta: [
-      { title: "Dashboard — HomeoCare Clinic Manager" },
+      { title: "Dashboard — Dr. Ayus Homoeopathy Hospital" },
       { name: "description", content: "Daily clinic overview: visits, revenue, follow-ups and stock alerts." },
-      { property: "og:title", content: "Dashboard — HomeoCare Clinic Manager" },
+      { property: "og:title", content: "Dashboard — Dr. Ayus Homoeopathy Hospital" },
       { property: "og:description", content: "Daily clinic overview: visits, revenue, follow-ups and stock alerts." },
     ],
   }),
@@ -65,69 +66,93 @@ function Panel({ title, children, action }: { title: string; children: React.Rea
 }
 
 function Dashboard() {
-  const { role, patients, visits, bills, medicines, followUps, prescriptions, settings } = useClinic();
+  const role = useClinic((s) => s.role);
+  const patients = useClinic((s) => s.patients);
+  const visits = useClinic((s) => s.visits);
+  const bills = useClinic((s) => s.bills);
+  const medicines = useClinic((s) => s.medicines);
+  const followUps = useClinic((s) => s.followUps);
+  const settings = useClinic((s) => s.settings);
+
   const today = todayISO();
-  const now = new Date();
+  const now = useMemo(() => new Date(), [today]);
 
-  const todaysVisits = visits.filter((v) => v.date === today);
-  const todaysBills = bills.filter((b) => b.date === today);
-  const todaysRevenue = todaysBills.reduce((s, b) => s + b.amountReceived, 0);
-  const pendingAmount = bills
-    .filter((b) => b.status !== "Paid")
-    .reduce((s, b) => s + (billTotal(b) - b.amountReceived), 0);
-  const lowStock = medicines.filter((m) => m.stock < settings.lowStockThreshold);
-  const dueFollowUps = followUps.filter((f) => f.status === "Pending" && f.dueDate >= today);
-  const todaysFollowUps = followUps.filter((f) => f.status === "Pending" && f.dueDate === today);
-  const newThisMonth = patients.filter((p) => isSameMonth(parseISO(p.registeredOn), now)).length;
-  const todaysPrescriptions = prescriptions.filter((p) => p.date === today);
+  const {
+    todaysVisits,
+    todaysBills,
+    todaysRevenue,
+    pendingAmount,
+    lowStockCount,
+    todaysFollowUps,
+    overdueFollowUps,
+    thisMonthRevenue,
+    revenueSeries,
+    monthlySeries,
+    modeSeries,
+  } = useMemo(() => {
+    const tVisits = visits.filter((v) => v.date === today);
+    const tBills = bills.filter((b) => b.date === today);
+    const tRev = tBills.reduce((s, b) => s + b.amountReceived, 0);
+    const pending = bills
+      .filter((b) => b.status !== "Paid")
+      .reduce((s, b) => s + (billTotal(b) - b.amountReceived), 0);
 
-  const revenueSeries = Array.from({ length: 7 }, (_, i) => {
-    const day = format(subDays(now, 6 - i), "yyyy-MM-dd");
+    let lowCount = 0;
+    for (const m of medicines) {
+      if (m && m.stock < settings.lowStockThreshold) lowCount++;
+    }
+
+    const tFollowUps = followUps.filter((f) => f.status === "Pending" && f.dueDate === today);
+    const odFollowUps = followUps.filter((f) => f.status === "Pending" && f.dueDate < today);
+    const tmRev = bills
+      .filter((b) => isSameMonth(parseISO(b.date), now))
+      .reduce((s, b) => s + b.amountReceived, 0);
+
+    const revSeries = Array.from({ length: 7 }, (_, i) => {
+      const day = format(subDays(now, 6 - i), "yyyy-MM-dd");
+      return {
+        day: format(subDays(now, 6 - i), "EEE"),
+        revenue: bills.filter((b) => b.date === day).reduce((s, b) => s + b.amountReceived, 0),
+      };
+    });
+
+    const mSeries = Array.from({ length: 6 }, (_, i) => {
+      const dt = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+      return {
+        month: format(dt, "MMM"),
+        patients: patients.filter((p) => isSameMonth(parseISO(p.registeredOn), dt)).length,
+      };
+    });
+
+    const modes = ["Cash", "UPI", "Card"] as const;
+    const mModeSeries = modes.map((m, i) => ({
+      name: m,
+      value: bills.filter((b) => b.paymentMode === m).length,
+      fill: ["var(--color-chart-1)", "var(--color-chart-2)", "var(--color-chart-3)"][i]!,
+    }));
+
     return {
-      day: format(subDays(now, 6 - i), "EEE"),
-      revenue: bills.filter((b) => b.date === day).reduce((s, b) => s + b.amountReceived, 0),
+      todaysVisits: tVisits,
+      todaysBills: tBills,
+      todaysRevenue: tRev,
+      pendingAmount: pending,
+      lowStockCount: lowCount,
+      todaysFollowUps: tFollowUps,
+      overdueFollowUps: odFollowUps,
+      thisMonthRevenue: tmRev,
+      revenueSeries: revSeries,
+      monthlySeries: mSeries,
+      modeSeries: mModeSeries,
     };
-  });
+  }, [visits, bills, medicines, followUps, patients, today, now, settings.lowStockThreshold]);
 
-  const overdueFollowUps = followUps.filter((f) => f.status === "Pending" && f.dueDate < today);
-  const thisMonthRevenue = bills
-    .filter((b) => isSameMonth(parseISO(b.date), now))
-    .reduce((s, b) => s + b.amountReceived, 0);
-  const activePatients = patients.filter((p) => p.active).length;
+  const recent = useMemo(() => {
+    return [...patients]
+      .sort((a, b) => b.registeredOn.localeCompare(a.registeredOn))
+      .slice(0, 5);
+  }, [patients]);
 
-  const monthlySeries = Array.from({ length: 6 }, (_, i) => {
-    const dt = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
-    return {
-      month: format(dt, "MMM"),
-      patients: patients.filter((p) => isSameMonth(parseISO(p.registeredOn), dt)).length,
-    };
-  });
-
-  const modes = ["Cash", "UPI", "Card"] as const;
-  const modeSeries = modes.map((m, i) => ({
-    name: m,
-    value: bills.filter((b) => b.paymentMode === m).length,
-    fill: ["var(--color-chart-1)", "var(--color-chart-2)", "var(--color-chart-3)"][i]!,
-  }));
-
-  // Revenue report: last 6 months broken down by payment mode
-  const revenueReport = Array.from({ length: 6 }, (_, i) => {
-    const dt = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
-    const label = format(dt, "MMM");
-    const monthBills = bills.filter((b) => isSameMonth(parseISO(b.date), dt));
-    return {
-      month: label,
-      Cash: monthBills.filter((b) => b.paymentMode === "Cash").reduce((s, b) => s + b.amountReceived, 0),
-      UPI: monthBills.filter((b) => b.paymentMode === "UPI").reduce((s, b) => s + b.amountReceived, 0),
-      Card: monthBills.filter((b) => b.paymentMode === "Card").reduce((s, b) => s + b.amountReceived, 0),
-    };
-  });
-
-  const recent = [...patients]
-    .sort((a, b) => b.registeredOn.localeCompare(a.registeredOn))
-    .slice(0, 5);
   const nameOf = (id: string) => patients.find((p) => p.id === id);
-
   const isDoctor = role === "doctor";
 
   return (
@@ -166,7 +191,7 @@ function Dashboard() {
           <StatCard index={3} label="Today's Revenue" value={todaysRevenue} icon={IndianRupee} tone="success" format={inr} trend={5} to="/billing" />
           <StatCard index={4} label="This Month Revenue" value={thisMonthRevenue} icon={Wallet} tone="primary" format={inr} to="/billing" />
           <StatCard index={5} label="Pending Payments" value={pendingAmount} icon={Wallet} tone="warning" format={inr} to="/billing" />
-          <StatCard index={6} label="Low Stock Medicines" value={lowStock.length} icon={Package} tone="danger" to="/inventory" />
+          <StatCard index={6} label="Low Stock Medicines" value={lowStockCount} icon={Package} tone="danger" to="/inventory" />
           <StatCard index={7} label="Overdue Follow-Ups" value={overdueFollowUps.length} icon={CalendarClock} tone="danger" to="/follow-ups" />
         </div>
       ) : (

@@ -14,9 +14,9 @@ import { formatDate, initials, todayISO } from "@/lib/format";
 export const Route = createFileRoute("/follow-ups")({
   head: () => ({
     meta: [
-      { title: "Follow-ups — HomeoCare Clinic Manager" },
+      { title: "Follow-ups — Dr. Ayus Homoeopathy Hospital" },
       { name: "description", content: "Track patient follow-ups due today, this week, overdue and completed." },
-      { property: "og:title", content: "Follow-ups — HomeoCare Clinic Manager" },
+      { property: "og:title", content: "Follow-ups — Dr. Ayus Homoeopathy Hospital" },
       { property: "og:description", content: "Track patient follow-ups due today, this week, overdue and completed." },
     ],
   }),

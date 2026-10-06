@@ -7,10 +7,10 @@ import { LeafMark } from "@/components/Logo";
 export const Route = createFileRoute("/forgot-password")({
   head: () => ({
     meta: [
-      { title: "Reset password — HomeoCare Clinic Manager" },
-      { name: "description", content: "Reset your HomeoCare clinic account password." },
-      { property: "og:title", content: "Reset password — HomeoCare Clinic Manager" },
-      { property: "og:description", content: "Reset your HomeoCare clinic account password." },
+      { title: "Reset password — Dr. Ayus Homoeopathy Hospital" },
+      { name: "description", content: "Reset your Dr. Ayus clinic account password." },
+      { property: "og:title", content: "Reset password — Dr. Ayus Homoeopathy Hospital" },
+      { property: "og:description", content: "Reset your Dr. Ayus clinic account password." },
     ],
   }),
   component: ForgotPassword,

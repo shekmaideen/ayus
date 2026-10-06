@@ -5,10 +5,7 @@ import {
   Download,
   RotateCcw,
   Database,
-  FileSpreadsheet,
   AlertTriangle,
-  CheckCircle2,
-  XCircle,
   ShieldCheck,
 } from "lucide-react";
 import { useRef, useState } from "react";
@@ -30,16 +27,16 @@ import {
 import { LeafMark } from "@/components/Logo";
 import { StaffManager } from "@/components/StaffManager";
 import { can, useClinic } from "@/store/clinic";
-import { exportBackup, importBackup, importPatientsCSV } from "@/lib/backup.functions";
+import { exportBackup, importBackup } from "@/lib/backup.functions";
 import { listAuditLogs } from "@/lib/clinic.functions";
 
 export const Route = createFileRoute("/settings")({
   head: () => ({
     meta: [
-      { title: "Settings — Dr. Ayus Homeopathy Hospital" },
-      { name: "description", content: "Clinic fees, stock threshold, staff accounts and clinic profile for Dr. Ayus Homeopathy Hospital." },
-      { property: "og:title", content: "Settings — Dr. Ayus Homeopathy Hospital" },
-      { property: "og:description", content: "Clinic fees, stock threshold, staff accounts and clinic profile for Dr. Ayus Homeopathy Hospital." },
+      { title: "Settings — Dr. Ayus Homoeopathy Hospital" },
+      { name: "description", content: "Clinic fees, stock threshold, staff accounts and clinic profile for Dr. Ayus Homoeopathy Hospital." },
+      { property: "og:title", content: "Settings — Dr. Ayus Homoeopathy Hospital" },
+      { property: "og:description", content: "Clinic fees, stock threshold, staff accounts and clinic profile for Dr. Ayus Homoeopathy Hospital." },
     ],
   }),
   component: () => (
@@ -49,52 +46,7 @@ export const Route = createFileRoute("/settings")({
   ),
 });
 
-// ─── CSV parser helpers ────────────────────────────────────────────
-function parseCSV(text: string): Record<string, string>[] {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim());
-  if (lines.length < 2) return [];
-  const headers = lines[0]!.split(",").map((h) => h.trim().replace(/^"|"$/g, "").toLowerCase());
-  return lines.slice(1).map((line) => {
-    const vals = splitCSVLine(line);
-    const obj: Record<string, string> = {};
-    headers.forEach((h, i) => { obj[h] = (vals[i] ?? "").trim().replace(/^"|"$/g, ""); });
-    return obj;
-  });
-}
 
-function splitCSVLine(line: string): string[] {
-  const result: string[] = [];
-  let cur = "";
-  let inQ = false;
-  for (const ch of line) {
-    if (ch === '"') { inQ = !inQ; }
-    else if (ch === "," && !inQ) { result.push(cur); cur = ""; }
-    else { cur += ch; }
-  }
-  result.push(cur);
-  return result;
-}
-
-function normaliseRow(raw: Record<string, string>): Record<string, string> {
-  // Accept common column name variants
-  const alias: Record<string, string> = {
-    "patient name": "name", fullname: "name", "full name": "name",
-    "date of birth": "age", dob: "age",
-    sex: "gender",
-    mobile: "phone", "mobile no": "phone", "phone no": "phone", "contact": "phone",
-    "e-mail": "email", "email id": "email",
-    "blood type": "bloodgroup", "blood grp": "bloodgroup",
-    "allergy": "allergies",
-    "occupation/profession": "occupation",
-    "reg date": "registeredon", "registration date": "registeredon", "registered on": "registeredon",
-  };
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(raw)) {
-    const key = alias[k.toLowerCase()] ?? k.toLowerCase().replace(/\s+/g, "");
-    out[key] = v;
-  }
-  return out;
-}
 
 // ─── Main Settings Page ───────────────────────────────────────────
 function SettingsPage() {
@@ -199,9 +151,6 @@ function SettingsPage() {
 
         {/* ── Database Backup & Restore ─────────────────────────── */}
         <BackupRestorePanel onRestored={() => void loadAll()} />
-
-        {/* ── Patient CSV Import ────────────────────────────────── */}
-        <PatientImportPanel onImported={() => void loadAll()} />
 
         {/* ── Clinical & System Audit Trail ─────────────────────── */}
         <AuditLogsPanel />
@@ -349,159 +298,7 @@ function BackupRestorePanel({ onRestored }: { onRestored: () => void }) {
   );
 }
 
-// ─── Patient CSV Import Panel ─────────────────────────────────────
-type ImportRow = Record<string, string>;
-type ImportResult = { inserted: number; errors: { row: number; error: string }[] };
 
-function PatientImportPanel({ onImported }: { onImported: () => void }) {
-  const doImport = useServerFn(importPatientsCSV);
-  const [rows, setRows] = useState<ImportRow[]>([]);
-  const [result, setResult] = useState<ImportResult | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [fileName, setFileName] = useState("");
-
-  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setFileName(file.name);
-    setResult(null);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const text = String(reader.result);
-      const parsed = parseCSV(text).map(normaliseRow);
-      setRows(parsed);
-    };
-    reader.readAsText(file);
-    e.target.value = "";
-  };
-
-  const handleImport = async () => {
-    if (!rows.length) { toast.error("Load a CSV file first."); return; }
-    setLoading(true);
-    try {
-      const res = await doImport({ data: { rows } });
-      setResult(res);
-      if (res.inserted > 0) {
-        toast.success(`Imported ${res.inserted} patient${res.inserted !== 1 ? "s" : ""}!`);
-        onImported();
-      }
-      if (res.errors.length > 0) {
-        toast.warning(`${res.errors.length} row(s) had errors and were skipped.`);
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Import failed.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const downloadTemplate = () => {
-    const csv = "name,age,gender,phone,email,address,bloodGroup,allergies,occupation\n" +
-                "Mohammed Arif,45,Male,9876543210,arif@email.com,123 Main St,A+,,Teacher\n";
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "patient-import-template.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  return (
-    <div className="card-soft p-5">
-      <div className="mb-4 flex items-center gap-3">
-        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-success-soft">
-          <FileSpreadsheet className="h-4 w-4 text-success" />
-        </span>
-        <div>
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">Patient Import (CSV)</h3>
-          <p className="text-xs text-muted-foreground mt-0.5">Bulk-import patients from an Excel or CSV file</p>
-        </div>
-      </div>
-
-      <div className="space-y-3">
-        {/* Step 1: Download template */}
-        <div className="rounded-lg border border-dashed p-3">
-          <p className="text-xs font-medium text-muted-foreground mb-2">Step 1 — Download the template</p>
-          <Button variant="outline" size="sm" className="gap-2 rounded-lg" onClick={downloadTemplate} id="btn-download-csv-template">
-            <Download className="h-4 w-4" /> CSV Template
-          </Button>
-          <p className="mt-2 text-xs text-muted-foreground">Fill in patient data. Required columns: <code className="bg-muted rounded px-1">name</code>. Others are optional.</p>
-        </div>
-
-        {/* Step 2: Upload CSV */}
-        <div className="rounded-lg border border-dashed p-3">
-          <p className="text-xs font-medium text-muted-foreground mb-2">Step 2 — Upload your filled CSV</p>
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium hover:bg-secondary">
-            <Upload className="h-4 w-4" /> Choose CSV file
-            <input type="file" accept=".csv,.txt" className="hidden" onChange={handleFile} />
-          </label>
-          {fileName && (
-            <div className="mt-2 flex items-center gap-2">
-              <Badge variant="outline" className="text-xs">{fileName}</Badge>
-              <span className="text-xs text-muted-foreground">{rows.length} rows detected</span>
-            </div>
-          )}
-        </div>
-
-        {/* Step 3: Import */}
-        {rows.length > 0 && (
-          <div className="rounded-lg border border-dashed p-3">
-            <p className="text-xs font-medium text-muted-foreground mb-2">Step 3 — Import</p>
-            <div className="mb-3 max-h-40 overflow-y-auto rounded border text-xs">
-              <table className="w-full">
-                <thead className="bg-muted sticky top-0">
-                  <tr>
-                    {["name","age","gender","phone","email"].map(h => (
-                      <th key={h} className="px-2 py-1 text-left font-medium">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.slice(0, 5).map((r, i) => (
-                    <tr key={i} className="border-t">
-                      {["name","age","gender","phone","email"].map(h => (
-                        <td key={h} className="px-2 py-1 truncate max-w-[100px]">{r[h] ?? "—"}</td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {rows.length > 5 && <p className="px-2 py-1 text-muted-foreground">…and {rows.length - 5} more rows</p>}
-            </div>
-            <Button
-              onClick={handleImport}
-              disabled={loading}
-              className="gap-2 rounded-xl"
-              id="btn-run-csv-import"
-            >
-              <FileSpreadsheet className="h-4 w-4" />
-              {loading ? "Importing…" : `Import ${rows.length} Patients`}
-            </Button>
-          </div>
-        )}
-
-        {/* Result summary */}
-        {result && (
-          <div className="space-y-1.5">
-            {result.inserted > 0 && (
-              <div className="flex items-center gap-2 rounded-lg bg-success-soft px-3 py-2 text-sm text-success">
-                <CheckCircle2 className="h-4 w-4 shrink-0" />
-                {result.inserted} patient{result.inserted !== 1 ? "s" : ""} imported successfully
-              </div>
-            )}
-            {result.errors.map((e) => (
-              <div key={e.row} className="flex items-start gap-2 rounded-lg bg-danger-soft px-3 py-2 text-xs text-destructive">
-                <XCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                Row {e.row}: {e.error}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 // ─── Audit Logs Panel ─────────────────────────────────────────────
 function AuditLogsPanel() {

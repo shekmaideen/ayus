@@ -26,8 +26,8 @@ export const requireAuth = createMiddleware({ type: "function" }).server(
 
     if (!token) {
       const cookieHeader = request.headers.get("cookie");
-      const match = cookieHeader?.match(/hc_token=([^;]+)/);
-      token = match && match[1] ? match[1] : null;
+      const match = cookieHeader?.match(/(?:^|;\s*)hc_token=([^;]+)/);
+      token = match && match[1] ? decodeURIComponent(match[1].trim()).replace(/^["']|["']$/g, "") : null;
     }
 
     if (!token) {

@@ -1,18 +1,21 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, useBlocker } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { CalendarDays, FileDown, Plus, Printer, Save, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { CalendarDays, FileDown, Plus, Printer, Save, Trash2, Search } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { AppShell, PageTitle } from "@/components/AppShell";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { can, useClinic } from "@/store/clinic";
-import { inr, todayISO, formatDate } from "@/lib/format";
-import { isPotencyApplicable, isBrandApplicable, type Bill, type Prescription, type PrescriptionItem } from "@/data/types";
+import { inr, todayISO, formatDate, initials } from "@/lib/format";
+import { cn } from "@/lib/utils";
+import { isPotencyApplicable, isBrandApplicable, type Bill, type Prescription, type PrescriptionItem, type Medicine, type Patient } from "@/data/types";
 import { WhatsAppButton } from "@/components/WhatsAppButton";
 import { buildPrescriptionMessage, openWhatsAppMessage } from "@/lib/whatsapp";
 import {
@@ -20,20 +23,29 @@ import {
   parseClinicalNotes,
   serializeClinicalNotes,
 } from "@/components/PrescriptionPrintSheet";
+import {
+  getPrescriptionPdfFilename,
+  generatePdfFromElement,
+  renderAndGeneratePdf,
+  downloadPdfFile,
+  sharePdfViaWhatsApp,
+  validateAndNormalizePhone,
+} from "@/lib/pdf-share";
 
 export const Route = createFileRoute("/prescriptions/new")({
-  validateSearch: (search: Record<string, unknown>): { patientId?: string; refill?: string } => {
-    const out: { patientId?: string; refill?: string } = {};
+  validateSearch: (search: Record<string, unknown>): { patientId?: string; refill?: string; edit?: string } => {
+    const out: { patientId?: string; refill?: string; edit?: string } = {};
     if (typeof search["patientId"] === "string") out.patientId = search["patientId"];
     if (typeof search["refill"] === "string") out.refill = search["refill"];
+    if (typeof search["edit"] === "string") out.edit = search["edit"];
     return out;
   },
   head: () => ({
     meta: [
-      { title: "Prescription builder — Dr. Ayus Homeopathy Hospital" },
-      { name: "description", content: "Build a homeopathic prescription, set a follow-up and print an A4 sheet for Dr. Ayus Homeopathy Hospital." },
-      { property: "og:title", content: "Prescription builder — Dr. Ayus Homeopathy Hospital" },
-      { property: "og:description", content: "Build a homeopathic prescription, set a follow-up and print an A4 sheet for Dr. Ayus Homeopathy Hospital." },
+      { title: "Prescription builder — Dr. Ayus Homoeopathy Hospital" },
+      { name: "description", content: "Build a homeopathic prescription, set a follow-up and print an A4 sheet for Dr. Ayus Homoeopathy Hospital." },
+      { property: "og:title", content: "Prescription builder — Dr. Ayus Homoeopathy Hospital" },
+      { property: "og:description", content: "Build a homeopathic prescription, set a follow-up and print an A4 sheet for Dr. Ayus Homoeopathy Hospital." },
     ],
   }),
   component: () => (
@@ -59,23 +71,324 @@ const blankRow = (): PrescriptionItem => ({
   instructions: "Before food",
 });
 
-function Builder() {
-  const { patientId, refill } = Route.useSearch();
-  const navigate = useNavigate();
-  const { patients, medicines, prescriptions, visits, templates, settings, role, savePrescription, saveTemplate } = useClinic();
+interface MedicineComboboxProps {
+  value: string;
+  onChange: (m: Medicine) => void;
+  medicines: Medicine[];
+}
 
-  const refillSource = refill ? prescriptions.find((p) => p.id === refill) : undefined;
-  const initialNotes = parseClinicalNotes(refillSource?.notes);
-  const [selected, setSelected] = useState(patientId ?? "");
-  const [items, setItems] = useState<PrescriptionItem[]>(
-    refillSource ? refillSource.items.map((i) => ({ ...i, id: uid() })) : [blankRow()],
+function MedicineCombobox({ value, onChange, medicines }: MedicineComboboxProps) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const selectedMed = useMemo(() => medicines.find((m) => m.id === value), [medicines, value]);
+
+  const filtered = useMemo(() => {
+    const t = search.trim().toLowerCase();
+    if (!t) {
+      return medicines.slice(0, 30);
+    }
+    const results: Medicine[] = [];
+    for (const m of medicines) {
+      if (!m) continue;
+      if (
+        m.name.toLowerCase().includes(t) ||
+        m.potency.toLowerCase().includes(t) ||
+        m.formType.toLowerCase().includes(t)
+      ) {
+        results.push(m);
+        if (results.length >= 35) break;
+      }
+    }
+    return results;
+  }, [medicines, search]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          role="combobox"
+          aria-expanded={open}
+          className="flex h-9 w-full items-center justify-between rounded-md border border-input bg-background px-3 py-1 text-xs shadow-sm hover:bg-muted/40 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          {selectedMed ? (
+            <span className="truncate">
+              <strong className="font-semibold text-foreground">{selectedMed.name}</strong>
+              {selectedMed.potency && selectedMed.potency !== "-" && (
+                <span className="ml-1.5 font-mono text-primary font-medium">({selectedMed.potency})</span>
+              )}
+              <span className="ml-1.5 text-muted-foreground">· {selectedMed.formType} · {selectedMed.stock} in stock · ₹{selectedMed.price}</span>
+            </span>
+          ) : (
+            <span className="text-muted-foreground">Click to search 9,500+ medicines...</span>
+          )}
+          <Search className="ml-2 h-3.5 w-3.5 shrink-0 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[min(90vw,480px)] p-2 shadow-xl" align="start">
+        <div className="relative mb-2">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            autoFocus
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Type medicine name (e.g. Arnica, 30CH)..."
+            className="h-8 pl-8 text-xs"
+          />
+        </div>
+        <div className="max-h-64 overflow-y-auto space-y-1 text-xs divide-y divide-border/40">
+          {filtered.length === 0 ? (
+            <div className="py-6 text-center text-muted-foreground">
+              No matching medicines found for "{search}"
+            </div>
+          ) : (
+            filtered.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => {
+                  onChange(m);
+                  setOpen(false);
+                  setSearch("");
+                }}
+                className={cn(
+                  "flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left rounded-md transition-colors hover:bg-primary-soft hover:text-primary-soft-foreground",
+                  m.id === value && "bg-secondary font-medium"
+                )}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-semibold text-foreground truncate">{m.name}</span>
+                    {m.potency && m.potency !== "-" && (
+                      <Badge variant="outline" className="px-1.5 py-0 text-[10px] font-mono border-primary/30 text-primary">
+                        {m.potency}
+                      </Badge>
+                    )}
+                    <span className="text-[11px] text-muted-foreground">{m.formType}</span>
+                  </div>
+                </div>
+                <div className="shrink-0 text-right font-mono text-[11px]">
+                  <span className={m.stock === 0 ? "text-destructive" : m.stock < 10 ? "text-warning-foreground" : "text-muted-foreground"}>
+                    {m.stock} in stock
+                  </span>
+                  <span className="ml-2 font-medium text-foreground">₹{m.price}</span>
+                </div>
+              </button>
+            ))
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
-  const [followUpDate, setFollowUpDate] = useState(refillSource?.followUpDate ?? "");
+}
+
+interface PatientComboboxProps {
+  value: string;
+  onChange: (patientId: string) => void;
+  patients: Patient[];
+}
+
+function PatientCombobox({ value, onChange, patients }: PatientComboboxProps) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const selectedPatient = useMemo(() => patients.find((p) => p.id === value), [patients, value]);
+
+  const filtered = useMemo(() => {
+    const t = search.trim().toLowerCase();
+    if (!t) {
+      return patients.slice(0, 30);
+    }
+    const results: Patient[] = [];
+    for (const p of patients) {
+      if (!p) continue;
+      if (
+        p.name.toLowerCase().includes(t) ||
+        p.phone.includes(t) ||
+        p.regNo.toLowerCase().includes(t) ||
+        (p.email && p.email.toLowerCase().includes(t))
+      ) {
+        results.push(p);
+        if (results.length >= 35) break;
+      }
+    }
+    return results;
+  }, [patients, search]);
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          role="combobox"
+          aria-expanded={open}
+          className="flex h-10 w-full items-center justify-between rounded-xl border border-input bg-background px-3 py-1.5 text-xs shadow-sm hover:bg-muted/40 text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        >
+          {selectedPatient ? (
+            <div className="flex items-center gap-2 truncate">
+              <Avatar className="h-6 w-6 shrink-0">
+                <AvatarFallback className="bg-primary-soft text-[10px] text-primary-soft-foreground">
+                  {initials(selectedPatient.name)}
+                </AvatarFallback>
+              </Avatar>
+              <div className="truncate">
+                <strong className="font-semibold text-foreground">{selectedPatient.name}</strong>
+                <span className="ml-1.5 font-mono text-[11px] text-muted-foreground">{selectedPatient.regNo}</span>
+                {selectedPatient.phone && (
+                  <span className="ml-1.5 text-[11px] text-muted-foreground">· {selectedPatient.phone}</span>
+                )}
+              </div>
+            </div>
+          ) : (
+            <span className="text-muted-foreground">Search by name, phone or reg no...</span>
+          )}
+          <Search className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[min(90vw,440px)] p-2 shadow-xl" align="start">
+        <div className="relative mb-2">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            autoFocus
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Type patient name, phone, or reg no..."
+            className="h-8 pl-8 text-xs rounded-lg"
+          />
+        </div>
+        <div className="max-h-64 overflow-y-auto space-y-1 text-xs divide-y divide-border/40">
+          {filtered.length === 0 ? (
+            <div className="py-6 text-center text-muted-foreground">
+              No matching patients found for "{search}"
+            </div>
+          ) : (
+            filtered.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => {
+                  onChange(p.id);
+                  setOpen(false);
+                  setSearch("");
+                }}
+                className={cn(
+                  "flex w-full items-center justify-between gap-2 px-2.5 py-2 text-left rounded-lg transition-colors hover:bg-primary-soft hover:text-primary-soft-foreground",
+                  p.id === value && "bg-secondary font-medium",
+                )}
+              >
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  <Avatar className="h-7 w-7 shrink-0">
+                    <AvatarFallback className="bg-primary-soft text-[10px] text-primary-soft-foreground">
+                      {initials(p.name)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-semibold text-foreground truncate">{p.name}</span>
+                      <Badge variant="secondary" className="px-1.5 py-0 text-[10px] font-mono">
+                        {p.regNo}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-2 text-[11px] text-muted-foreground mt-0.5">
+                      <span>{p.gender}</span>
+                      <span>·</span>
+                      <span>{p.age} yrs</span>
+                      {p.phone && (
+                        <>
+                          <span>·</span>
+                          <span className="font-mono">{p.phone}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </button>
+            ))
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function Builder() {
+  const { patientId, refill, edit } = Route.useSearch();
+  const navigate = useNavigate();
+  const {
+    patients,
+    medicines,
+    prescriptions,
+    bills,
+    visits,
+    templates,
+    settings,
+    role,
+    savePrescription,
+    updatePrescription,
+    saveTemplate,
+  } = useClinic();
+
+  const editSource = edit ? prescriptions.find((p) => p.id === edit) : undefined;
+  const refillSource = refill ? prescriptions.find((p) => p.id === refill) : undefined;
+  const sourceRx = editSource || refillSource;
+  const initialNotes = parseClinicalNotes(sourceRx?.notes);
+
+  const [selected, setSelected] = useState(patientId ?? editSource?.patientId ?? "");
+  const [items, setItems] = useState<PrescriptionItem[]>(
+    editSource
+      ? editSource.items.map((i) => ({ ...i }))
+      : refillSource
+      ? refillSource.items.map((i) => ({ ...i, id: uid() }))
+      : [blankRow()],
+  );
+  const [followUpDate, setFollowUpDate] = useState(sourceRx?.followUpDate ?? "");
   const [diagnosis, setDiagnosis] = useState(initialNotes.diagnosis);
   const [specialInstructions, setSpecialInstructions] = useState(initialNotes.specialInstructions);
   const [templateName, setTemplateName] = useState("");
-  const [visitDate, setVisitDate] = useState(todayISO());
-  const [saved, setSaved] = useState<{ prescription: Prescription; bill: Bill } | null>(null);
+  const [visitDate, setVisitDate] = useState(editSource?.date ?? todayISO());
+  const [saved, setSaved] = useState<{ prescription: Prescription; bill?: Bill | undefined } | null>(null);
+
+  // Sync if editing and data loaded asynchronously
+  useEffect(() => {
+    if (editSource) {
+      setSelected(editSource.patientId);
+      setItems(editSource.items.map((i) => ({ ...i })));
+      setFollowUpDate(editSource.followUpDate ?? "");
+      const parsed = parseClinicalNotes(editSource.notes);
+      setDiagnosis(parsed.diagnosis);
+      setSpecialInstructions(parsed.specialInstructions);
+      if (editSource.date) setVisitDate(editSource.date);
+    }
+  }, [editSource?.id]);
+
+  // Track unsaved changes
+  const isDirty = !saved && (
+    items.some((i) => Boolean(i.medicineId)) ||
+    Boolean(diagnosis.trim()) ||
+    Boolean(specialInstructions.trim())
+  );
+
+  // Warn on tab close / browser refresh
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isDirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [isDirty]);
+
+  // Block internal router navigation
+  useBlocker({
+    shouldBlockFn: () => {
+      if (!isDirty) return false;
+      return !window.confirm(
+        "You have unsaved changes on this prescription. Are you sure you want to discard them and leave?"
+      );
+    },
+    enableBeforeUnload: () => isDirty,
+  });
 
   const patient = patients.find((p) => p.id === selected);
   const total = useMemo(
@@ -98,11 +411,56 @@ function Builder() {
   const update = (id: string, patch: Partial<PrescriptionItem>) =>
     setItems((rows) => rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
 
+  const selectMedicine = (id: string, m: Medicine) => {
+    setItems((rows) => {
+      const updated = rows.map((r) =>
+        r.id === id
+          ? {
+              ...r,
+              medicineId: m.id,
+              medicineName: m.name,
+              brand: "",
+              formType: m.formType || "Bottle",
+              potency: m.potency || "",
+            }
+          : r,
+      );
+
+      // When doctor adds a medicine in the last row, automatically append a new blank row
+      const lastRow = updated[updated.length - 1];
+      if (lastRow && lastRow.medicineId) {
+        return [...updated, blankRow()];
+      }
+      return updated;
+    });
+  };
+
   const handleSave = () => {
     if (!patient) { toast.error("Select a patient first"); return; }
     const valid = items.filter((i) => i.medicineId);
     if (valid.length === 0) { toast.error("Add at least one medicine"); return; }
     const combinedNotes = serializeClinicalNotes(diagnosis, specialInstructions);
+
+    if (editSource) {
+      updatePrescription(editSource.id, {
+        items: valid,
+        followUpDate: followUpDate || null,
+        notes: combinedNotes,
+        date: visitDate,
+      });
+      const updatedRx: Prescription = {
+        ...editSource,
+        items: valid,
+        followUpDate: followUpDate || null,
+        notes: combinedNotes,
+        date: visitDate,
+      };
+      const existingBill = bills.find((b) => b.prescriptionId === editSource.id);
+      setSaved({ prescription: updatedRx, bill: existingBill });
+      toast.success("Prescription updated successfully");
+      return;
+    }
+
     const result = savePrescription({
       patientId: patient.id,
       items: valid,
@@ -115,34 +473,72 @@ function Builder() {
     toast.success("Prescription saved · bill generated");
   };
 
-  const handleSendWhatsApp = () => {
-    if (!saved) {
-      toast.error("Please save the prescription before sending the WhatsApp message.");
-      return;
+  const [pdfLoading, setPdfLoading] = useState(false);
+
+  const getPrescriptionPdfFile = async (): Promise<File | null> => {
+    if (!saved || !patient) return null;
+    const filename = getPrescriptionPdfFilename(patient.regNo, saved.prescription.date);
+    return await renderAndGeneratePdf(
+      <PrescriptionPrintSheet
+        prescription={saved.prescription}
+        patient={patient}
+        visit={visits.find((v) => v.id === saved.prescription.visitId)}
+        medicines={medicines}
+        settings={settings}
+      />,
+      filename
+    );
+  };
+
+  const handleDownloadPdf = async () => {
+    try {
+      setPdfLoading(true);
+      const file = await getPrescriptionPdfFile();
+      if (!file) {
+        toast.error("Unable to generate the PDF. Please try again.");
+        return;
+      }
+      downloadPdfFile(file, file.name);
+      toast.success("Prescription PDF downloaded successfully.");
+    } catch (err) {
+      console.error(err);
+      toast.error("Unable to generate the PDF. Please try again.");
+    } finally {
+      setPdfLoading(false);
     }
-    if (!patient) {
-      toast.error("Please select a patient.");
+  };
+
+  const handleSendWhatsAppPdf = async () => {
+    if (!saved || !patient) {
+      toast.error("Please save the prescription before sending via WhatsApp.");
       return;
     }
 
-    const message = buildPrescriptionMessage({
-      clinicName: settings.clinicName,
-      doctorName: settings.doctorName,
-      clinicPhone: settings.phone,
-      patientName: patient.name,
-      regNo: patient.regNo,
-      visitDate: saved.prescription.date,
-      items: saved.prescription.items.map((i) => ({
-        medicineName: i.medicineName,
-        potency: i.potency,
-        dosage: i.dosage,
-        frequency: i.frequency,
-        duration: i.duration,
-        instructions: i.instructions,
-      })),
-    });
+    const phoneCheck = validateAndNormalizePhone(patient.phone);
+    if (!phoneCheck.valid) {
+      toast.error(phoneCheck.error);
+      return;
+    }
 
-    openWhatsAppMessage(patient.phone, message);
+    try {
+      setPdfLoading(true);
+      const file = await getPrescriptionPdfFile();
+      if (!file) {
+        toast.error("Unable to generate the PDF. Please try again.");
+        return;
+      }
+      await sharePdfViaWhatsApp({
+        file,
+        phone: patient.phone,
+        patientName: patient.name,
+        docType: "prescription",
+      });
+    } catch (err) {
+      console.error(err);
+      toast.error("Unable to generate the PDF. Please try again.");
+    } finally {
+      setPdfLoading(false);
+    }
   };
 
   // ─────────────────────────────────────────────────────────────────
@@ -153,19 +549,37 @@ function Builder() {
       <>
         <div className="no-print mb-6">
           <PageTitle
-            title="Prescription saved"
-            subtitle={`Prescription ready for printing · Bill ${saved.bill.invoiceNo} generated`}
+            title={editSource ? "Prescription updated" : "Prescription saved"}
+            subtitle={
+              editSource
+                ? "Prescription has been updated successfully"
+                : `Prescription ready for printing · Bill ${saved.bill?.invoiceNo ?? ""} generated`
+            }
             action={
               <div className="flex flex-wrap items-center gap-2">
                 <Button variant="outline" className="rounded-xl shadow-sm" onClick={() => window.print()}>
                   <Printer className="mr-2 h-4 w-4 text-emerald-600" /> Print
                 </Button>
-                <Button variant="outline" className="rounded-xl shadow-sm" onClick={() => window.print()}>
+                <Button
+                  variant="outline"
+                  className="rounded-xl shadow-sm"
+                  disabled={pdfLoading}
+                  onClick={handleDownloadPdf}
+                >
                   <FileDown className="mr-2 h-4 w-4 text-primary" /> Save as PDF
                 </Button>
-                <WhatsAppButton onClick={handleSendWhatsApp} />
-                <Button asChild className="rounded-xl">
-                  <Link to="/billing/$id" params={{ id: saved.bill.id }}>Open bill</Link>
+                <WhatsAppButton
+                  label="Send WhatsApp PDF"
+                  loading={pdfLoading}
+                  onClick={handleSendWhatsAppPdf}
+                />
+                {saved.bill && (
+                  <Button asChild className="rounded-xl">
+                    <Link to="/billing/$id" params={{ id: saved.bill.id }}>Open bill</Link>
+                  </Button>
+                )}
+                <Button asChild variant="outline" className="rounded-xl">
+                  <Link to="/patients/$id" params={{ id: patient.id }}>Back to patient</Link>
                 </Button>
               </div>
             }
@@ -197,7 +611,11 @@ function Builder() {
           <Button variant="outline" className="rounded-xl" onClick={() => window.print()}>
             <Printer className="mr-2 h-4 w-4" /> Print
           </Button>
-          <WhatsAppButton onClick={handleSendWhatsApp} />
+          <WhatsAppButton
+            label="Send WhatsApp PDF"
+            loading={pdfLoading}
+            onClick={handleSendWhatsAppPdf}
+          />
         </div>
       </>
     );
@@ -209,12 +627,27 @@ function Builder() {
   return (
     <>
       <PageTitle
-        title={refillSource ? "Refill prescription" : "Prescription builder"}
-        subtitle="Select medicines from inventory and build A4 prescription"
+        title={
+          editSource
+            ? "Edit prescription"
+            : refillSource
+            ? "Refill prescription"
+            : "Prescription builder"
+        }
+        subtitle={
+          editSource
+            ? `Editing existing prescription · Date: ${formatDate(visitDate)}`
+            : "Select medicines from inventory and build A4 prescription"
+        }
         action={
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {isDirty && (
+              <Badge variant="outline" className="border-warning/50 bg-warning-soft text-warning-foreground text-xs py-1 px-2.5">
+                ● Unsaved changes
+              </Badge>
+            )}
             <Button className="rounded-xl" onClick={handleSave}>
-              <Save className="mr-2 h-4 w-4" /> Save prescription
+              <Save className="mr-2 h-4 w-4" /> {editSource ? "Save changes" : "Save prescription"}
             </Button>
           </div>
         }
@@ -227,14 +660,11 @@ function Builder() {
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-2">
                 <Label>Patient</Label>
-                <Select value={selected} onValueChange={setSelected}>
-                  <SelectTrigger><SelectValue placeholder="Select a patient" /></SelectTrigger>
-                  <SelectContent className="max-h-72">
-                    {patients.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>{p.name} · {p.regNo}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <PatientCombobox
+                  value={selected}
+                  onChange={setSelected}
+                  patients={patients}
+                />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="vd">Visit date (Backdate)</Label>
@@ -267,7 +697,8 @@ function Builder() {
                   onValueChange={(v) => {
                     const t = templates.find((x) => x.id === v);
                     if (t) {
-                      setItems(t.items.map((i) => ({ ...i, id: uid() })));
+                      const loadedRows = t.items.map((i) => ({ ...i, id: uid() }));
+                      setItems([...loadedRows, blankRow()]);
                       toast.success(`Loaded template "${t.name}"`);
                     }
                   }}
@@ -299,45 +730,14 @@ function Builder() {
                     className="overflow-hidden"
                   >
                     <div className="mb-3 space-y-3 rounded-xl border p-4">
-                      {/* Row 1: Medicine Selection & Auto-fill Form / Brand */}
-                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      {/* Row 1: Medicine Selection & Auto-fill Form */}
+                      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                         <div className="space-y-1.5 sm:col-span-2">
                           <Label className="text-xs">Medicine</Label>
-                          <Select
+                          <MedicineCombobox
                             value={row.medicineId}
-                            onValueChange={(v) => {
-                              const m = medicines.find((x) => x.id === v);
-                              if (m) {
-                                update(row.id, {
-                                  medicineId: v,
-                                  medicineName: m.name,
-                                  brand: m.brand || "—",
-                                  formType: m.formType || "Bottle",
-                                  potency: m.potency || "",
-                                });
-                              }
-                            }}
-                          >
-                            <SelectTrigger><SelectValue placeholder="Search inventory" /></SelectTrigger>
-                            <SelectContent className="max-h-72">
-                              {medicines.map((m) => (
-                                <SelectItem key={m.id} value={m.id}>
-                                  {m.name}
-                                  {m.potency && m.potency.trim() !== "" && m.potency !== "-" ? ` · ${m.potency}` : ""}
-                                  {` · ${m.formType || "Bottle"}`}
-                                  {isBrandApplicable(m.formType) && m.brand ? ` (${m.brand})` : ""} · {m.stock} in stock · ₹{m.price}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-xs">Brand</Label>
-                          <Input
-                            value={row.brand ?? ""}
-                            onChange={(e) => update(row.id, { brand: e.target.value })}
-                            placeholder="e.g. SBL, Schwabe..."
-                            className="h-9 text-xs"
+                            medicines={medicines}
+                            onChange={(m) => selectMedicine(row.id, m)}
                           />
                         </div>
                         <div className="space-y-1.5">
@@ -393,14 +793,25 @@ function Builder() {
                         <div className="flex items-end gap-2 sm:col-span-1">
                           <div className="flex-1 space-y-1.5">
                             <Label className="text-xs">Instructions</Label>
-                            <Input value={row.instructions} onChange={(e) => update(row.id, { instructions: e.target.value })} className="h-9 text-xs" />
+                            <Select
+                              value={row.instructions === "After food" ? "After food" : "Before food"}
+                              onValueChange={(val) => update(row.id, { instructions: val })}
+                            >
+                              <SelectTrigger className="h-9 text-xs">
+                                <SelectValue placeholder="Instructions" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="Before food">Before food</SelectItem>
+                                <SelectItem value="After food">After food</SelectItem>
+                              </SelectContent>
+                            </Select>
                           </div>
                           <Button
                             variant="ghost"
                             size="icon"
                             aria-label="Remove medicine"
                             className="h-9 w-9 shrink-0 text-destructive hover:bg-destructive/10"
-                            onClick={() => setItems((r) => (r.length > 1 ? r.filter((x) => x.id !== row.id) : r))}
+                            onClick={() => setItems((r) => (r.length > 1 ? r.filter((x) => x.id !== row.id) : [blankRow()]))}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>

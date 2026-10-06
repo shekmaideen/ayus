@@ -1,7 +1,7 @@
 /**
  * src/lib/schema.ts
  * Drizzle ORM table definitions for MySQL.
- * Mirrors the homeocare.sql schema exactly.
+ * Mirrors the ayus.sql schema exactly.
  */
 import {
   boolean,
@@ -36,7 +36,7 @@ export const clinicSettings = mysqlTable("clinic_settings", {
   followUpFee:        decimal("follow_up_fee", { precision: 10, scale: 2 }).notNull().default("250"),
   registrationFee:    decimal("registration_fee", { precision: 10, scale: 2 }).notNull().default("100"),
   lowStockThreshold:  int("low_stock_threshold").notNull().default(10),
-  clinicName:         varchar("clinic_name", { length: 200 }).notNull().default("HomeoCare Clinic"),
+  clinicName:         varchar("clinic_name", { length: 200 }).notNull().default("Dr. Ayus Homoeopathy Hospital"),
   address:            varchar("address", { length: 500 }).notNull().default(""),
   phone:              varchar("phone", { length: 100 }).notNull().default(""),
   doctorName:         varchar("doctor_name", { length: 100 }).notNull().default(""),
@@ -77,6 +77,16 @@ export const visits = mysqlTable("visits", {
   complaint: varchar("complaint", { length: 500 }).notNull().default(""),
   notes:     varchar("notes", { length: 1000 }).notNull().default(""),
   createdAt: datetime("created_at", { mode: "string" }).notNull(),
+});
+
+// ─── Chief Complaints (Chronological Clinical History) ────────────
+export const chiefComplaints = mysqlTable("chief_complaints", {
+  id:        char("id", { length: 36 }).primaryKey(),
+  patientId: char("patient_id", { length: 36 }).notNull(),
+  visitId:   char("visit_id", { length: 36 }),
+  complaint: text("complaint").notNull(),
+  createdAt: datetime("created_at", { mode: "string" }).notNull(),
+  updatedAt: datetime("updated_at", { mode: "string" }),
 });
 
 // ─── Medicines ───────────────────────────────────────────────────
@@ -159,5 +169,3 @@ export const auditLogs = mysqlTable("audit_logs", {
   details:    text("details"),
   createdAt:  datetime("created_at", { mode: "string" }).notNull(),
 });
-
-

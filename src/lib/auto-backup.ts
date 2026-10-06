@@ -17,6 +17,7 @@ import {
   templates,
   clinicSettings,
   users,
+  chiefComplaints,
 } from "@/lib/schema";
 import { logAudit } from "@/lib/audit";
 
@@ -38,7 +39,7 @@ export async function ensureDailyBackup(): Promise<{ ran: boolean; file?: string
   try {
     await fs.mkdir(BACKUP_DIR, { recursive: true });
 
-    const filename = `homeocare-auto-${today}.json`;
+    const filename = `ayus-auto-${today}.json`;
     const filepath = path.join(BACKUP_DIR, filename);
 
     // Check if today's backup file already exists
@@ -51,7 +52,7 @@ export async function ensureDailyBackup(): Promise<{ ran: boolean; file?: string
     }
 
     // Export all current data
-    const [pats, chs, vis, meds, pres, bls, fus, tpls, sets, usrs] = await Promise.all([
+    const [pats, chs, vis, meds, pres, bls, fus, tpls, sets, usrs, ccs] = await Promise.all([
       db.select().from(patients),
       db.select().from(caseHistories),
       db.select().from(visits),
@@ -71,6 +72,7 @@ export async function ensureDailyBackup(): Promise<{ ran: boolean; file?: string
         active: users.active,
         createdAt: users.createdAt,
       }).from(users),
+      db.select().from(chiefComplaints),
     ]);
 
     const backupPayload = {
@@ -81,6 +83,7 @@ export async function ensureDailyBackup(): Promise<{ ran: boolean; file?: string
         patients: pats.length,
         caseHistories: chs.length,
         visits: vis.length,
+        chiefComplaints: ccs.length,
         medicines: meds.length,
         prescriptions: pres.length,
         bills: bls.length,
@@ -94,6 +97,7 @@ export async function ensureDailyBackup(): Promise<{ ran: boolean; file?: string
         patients: pats,
         caseHistories: chs,
         visits: vis,
+        chiefComplaints: ccs,
         medicines: meds,
         prescriptions: pres,
         bills: bls,
@@ -134,7 +138,7 @@ async function pruneOldBackups(): Promise<void> {
   try {
     const files = await fs.readdir(BACKUP_DIR);
     const autoFiles = files.filter(
-      (f) => f.startsWith("homeocare-auto-") && f.endsWith(".json"),
+      (f) => f.startsWith("ayus-auto-") && f.endsWith(".json"),
     );
 
     if (autoFiles.length <= RETENTION_DAYS) return;

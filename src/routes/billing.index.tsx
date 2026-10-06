@@ -14,13 +14,26 @@ import { formatDate, inr, todayISO } from "@/lib/format";
 import type { Bill } from "@/data/types";
 import { WhatsAppButton } from "@/components/WhatsAppButton";
 import { buildBillingMessage, openWhatsAppMessage } from "@/lib/whatsapp";
+import { BillPrintSheet } from "@/components/BillPrintSheet";
+import {
+  getBillPdfFilename,
+  renderAndGeneratePdf,
+  sharePdfViaWhatsApp,
+  validateAndNormalizePhone,
+} from "@/lib/pdf-share";
 
 export const Route = createFileRoute("/billing/")({
+  validateSearch: (search: Record<string, unknown>): { patientId?: string; new?: boolean } => {
+    const out: { patientId?: string; new?: boolean } = {};
+    if (typeof search["patientId"] === "string") out.patientId = search["patientId"];
+    if (search["new"] === true || search["new"] === "true") out.new = true;
+    return out;
+  },
   head: () => ({
     meta: [
-      { title: "Billing — HomeoCare Clinic Manager" },
+      { title: "Billing — Dr. Ayus Homoeopathy Hospital" },
       { name: "description", content: "Track clinic invoices, payment status and outstanding balances." },
-      { property: "og:title", content: "Billing — HomeoCare Clinic Manager" },
+      { property: "og:title", content: "Billing — Dr. Ayus Homoeopathy Hospital" },
       { property: "og:description", content: "Track clinic invoices, payment status and outstanding balances." },
     ],
   }),
@@ -39,33 +52,50 @@ const statusClass = (s: string) =>
       : "bg-danger-soft text-destructive";
 
 function Billing() {
+  const search = Route.useSearch();
   const { bills, patients, role, settings, createManualBill } = useClinic();
   const navigate = useNavigate();
   const [tab, setTab] = useState("All");
   const [q, setQ] = useState("");
-  const [manualPatient, setManualPatient] = useState("");
+  const [selectedPatientFilter, setSelectedPatientFilter] = useState<string>(search?.patientId || "all");
+  const [manualPatient, setManualPatient] = useState(search?.patientId || "");
   const [manualDate, setManualDate] = useState(todayISO());
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(Boolean(search?.new));
 
-  const handleQuickWhatsApp = (b: Bill) => {
+  const [sharingBillId, setSharingBillId] = useState<string | null>(null);
+
+  const handleQuickWhatsApp = async (b: Bill) => {
     const p = patients.find((pat) => pat.id === b.patientId);
     if (!p) {
       toast.error("Patient details not found for this bill.");
       return;
     }
-    const message = buildBillingMessage({
-      clinicName: settings.clinicName,
-      patientName: p.name,
-      billNo: b.invoiceNo,
-      date: b.date,
-      items: b.items.map((it) => ({
-        label: it.label,
-        qty: it.qty,
-        rate: it.rate,
-      })),
-      totalAmount: billTotal(b),
-    });
-    openWhatsAppMessage(p.phone, message);
+
+    const phoneCheck = validateAndNormalizePhone(p.phone);
+    if (!phoneCheck.valid) {
+      toast.error(phoneCheck.error);
+      return;
+    }
+    try {
+      setSharingBillId(b.id);
+      const filename = getBillPdfFilename(b.invoiceNo);
+      const file = await renderAndGeneratePdf(
+        <BillPrintSheet bill={b} patient={p} settings={settings} />,
+        filename
+      );
+      await sharePdfViaWhatsApp({
+        file,
+        phone: p.phone,
+        patientName: p.name,
+        docType: "bill",
+        billNumber: b.invoiceNo,
+      });
+    } catch (err) {
+      console.error(err);
+      toast.error("Unable to generate the PDF. Please try again.");
+    } finally {
+      setSharingBillId(null);
+    }
   };
 
   const nameOf = (id: string) => patients.find((p) => p.id === id)?.name ?? "Unknown";
@@ -73,13 +103,15 @@ function Billing() {
   const rows = useMemo(() => {
     const t = q.trim().toLowerCase();
     return bills
+      .filter((b) => (selectedPatientFilter === "all" ? true : b.patientId === selectedPatientFilter))
       .filter((b) => (tab === "All" ? true : b.status === tab))
       .filter((b) => !t || b.invoiceNo.toLowerCase().includes(t) || nameOf(b.patientId).toLowerCase().includes(t))
       .sort((a, b) => b.date.localeCompare(a.date));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bills, tab, q, patients]);
+  }, [bills, tab, q, selectedPatientFilter, patients]);
 
   const outstanding = bills.reduce((s, b) => s + (billTotal(b) - b.amountReceived), 0);
+  const activeFilteredPatient = selectedPatientFilter !== "all" ? patients.find((p) => p.id === selectedPatientFilter) : null;
 
   return (
     <>
@@ -128,6 +160,22 @@ function Billing() {
       />
 
       <div className="card-soft p-4">
+        {activeFilteredPatient && (
+          <div className="mb-4 flex items-center justify-between rounded-xl bg-primary/10 border border-primary/20 px-4 py-2.5 text-sm">
+            <span className="font-medium text-foreground">
+              Showing invoices for: <strong className="text-primary">{activeFilteredPatient.name}</strong> ({activeFilteredPatient.regNo})
+            </span>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 text-xs font-semibold text-primary hover:text-primary/80"
+              onClick={() => setSelectedPatientFilter("all")}
+            >
+              Show all patients
+            </Button>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-center gap-3">
           <Tabs value={tab} onValueChange={setTab}>
             <TabsList className="rounded-xl">
@@ -176,6 +224,8 @@ function Billing() {
                     </div>
                     <WhatsAppButton
                       size="sm"
+                      label="WhatsApp PDF"
+                      loading={sharingBillId === b.id}
                       onClick={(e) => {
                         e.preventDefault();
                         e.stopPropagation();

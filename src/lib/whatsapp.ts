@@ -10,30 +10,35 @@
  */
 import { toast } from "sonner";
 
+export interface PhoneValidationResult {
+  valid: boolean;
+  phone: string | null;
+  error?: string;
+}
+
 /**
  * Normalizes Indian phone numbers into international 91XXXXXXXXXX format.
+ * Strips whitespace, hyphens, brackets, non-digits.
  * Handles:
  *   +91XXXXXXXXXX
  *   91XXXXXXXXXX
  *   XXXXXXXXXX
  *   0XXXXXXXXXX
- * Avoids duplicate country codes. Returns null if invalid or missing.
+ * Returns null if invalid or missing.
  */
 export function normalizeIndianPhoneNumber(phone?: string | null): string | null {
   if (!phone || typeof phone !== "string") return null;
 
-  // Remove whitespace, dashes, parens
-  let cleaned = phone.replace(/[^0-9+]/g, "").trim();
+  // Remove whitespace, dashes, parens, brackets, and any non-digit
+  const cleaned = phone.replace(/[^0-9]/g, "").trim();
   if (!cleaned) return null;
 
-  // Remove leading plus
-  if (cleaned.startsWith("+")) {
-    cleaned = cleaned.slice(1);
-  }
-
-  // Remove leading single zero (e.g. 09876543210 -> 9876543210)
+  // Handle 11 digits starting with 0 (e.g., 09876543210 -> 9876543210)
   if (cleaned.length === 11 && cleaned.startsWith("0")) {
-    cleaned = cleaned.slice(1);
+    const withoutZero = cleaned.slice(1);
+    if (/^[6-9]\d{9}$/.test(withoutZero)) {
+      return `91${withoutZero}`;
+    }
   }
 
   // 10 digits starting with standard mobile digits 6, 7, 8, 9
@@ -41,7 +46,7 @@ export function normalizeIndianPhoneNumber(phone?: string | null): string | null
     return `91${cleaned}`;
   }
 
-  // 12 digits starting with 91 followed by 10 digits
+  // 12 digits starting with 91 followed by standard mobile digits
   if (/^91[6-9]\d{9}$/.test(cleaned)) {
     return cleaned;
   }
@@ -57,6 +62,88 @@ export function normalizeIndianPhoneNumber(phone?: string | null): string | null
   }
 
   return null;
+}
+
+/**
+ * Validates patient phone presence and formatting.
+ * Returns distinct error messages according to clinic specifications:
+ * - Missing: "Patient phone number is not available. Please add a phone number before sending via WhatsApp."
+ * - Invalid: "Invalid patient phone number. Please check the patient's phone number."
+ */
+export function validateAndNormalizePhone(phone?: string | null): PhoneValidationResult {
+  if (!phone || typeof phone !== "string" || !phone.trim()) {
+    return {
+      valid: false,
+      phone: null,
+      error: "Patient phone number is not available. Please add a phone number before sending via WhatsApp.",
+    };
+  }
+
+  const normalized = normalizeIndianPhoneNumber(phone);
+  if (!normalized) {
+    return {
+      valid: false,
+      phone: null,
+      error: "Invalid patient phone number. Please check the patient's phone number.",
+    };
+  }
+
+  return {
+    valid: true,
+    phone: normalized,
+  };
+}
+
+/**
+ * Builds the direct WhatsApp chat URL.
+ * - On desktop (Windows PC): opens the native WhatsApp desktop application via `whatsapp://`
+ * - If text is provided: appends `&text=...`
+ * - If text is empty/undefined: opens the chat with NO text generated in the message box
+ * - On mobile devices: uses `https://wa.me/...`
+ */
+export function buildWhatsAppDirectUrl(normalizedPhone: string, text?: string): string {
+  const hasText = Boolean(text && text.trim());
+  const encoded = hasText ? encodeURIComponent(text!.trim()) : "";
+
+  const isMobile =
+    typeof navigator !== "undefined" &&
+    /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+  if (isMobile) {
+    return hasText
+      ? `https://wa.me/${normalizedPhone}?text=${encoded}`
+      : `https://wa.me/${normalizedPhone}`;
+  }
+
+  // Windows Desktop PC: Launch native WhatsApp Desktop app directly
+  return hasText
+    ? `whatsapp://send?phone=${normalizedPhone}&text=${encoded}`
+    : `whatsapp://send?phone=${normalizedPhone}`;
+}
+
+/**
+ * Triggers opening of the WhatsApp desktop application or web URL seamlessly
+ */
+export function launchWhatsAppUrl(url: string): void {
+  if (typeof window === "undefined") return;
+
+  if (url.startsWith("https://") || url.startsWith("http://")) {
+    window.open(url, "_blank");
+    return;
+  }
+
+  // Native desktop app protocol (whatsapp://)
+  const a = document.createElement("a");
+  a.href = url;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    try {
+      document.body.removeChild(a);
+    } catch {
+      // ignore
+    }
+  }, 200);
 }
 
 /**
@@ -101,7 +188,7 @@ export interface RegistrationMessageParams {
 }
 
 export function buildRegistrationMessage(params: RegistrationMessageParams): string {
-  const clinic = (params.clinicName || "Dr. Ayus Homeopathy Hospital").trim();
+  const clinic = (params.clinicName || "Dr. Ayus Homoeopathy Hospital").trim();
   const patient = (params.patientName || "Patient").trim();
 
   const lines: string[] = [
@@ -154,7 +241,7 @@ export interface PrescriptionMessageParams {
 }
 
 export function buildPrescriptionMessage(params: PrescriptionMessageParams): string {
-  const clinic = (params.clinicName || "Dr. Ayus Homeopathy Hospital").trim();
+  const clinic = (params.clinicName || "Dr. Ayus Homoeopathy Hospital").trim();
   const patient = (params.patientName || "Patient").trim();
 
   const lines: string[] = [
@@ -223,7 +310,7 @@ export interface BillingMessageParams {
 }
 
 export function buildBillingMessage(params: BillingMessageParams): string {
-  const clinic = (params.clinicName || "Dr. Ayus Homeopathy Hospital").trim();
+  const clinic = (params.clinicName || "Dr. Ayus Homoeopathy Hospital").trim();
   const patient = (params.patientName || "Patient").trim();
 
   const lines: string[] = [
@@ -283,24 +370,22 @@ export function buildBillingMessage(params: BillingMessageParams): string {
 
 /**
  * Validates the patient's phone number, prepares the WhatsApp click-to-chat URL,
- * and opens WhatsApp/WhatsApp Web in a new tab.
+ * and opens WhatsApp in the desktop application.
  * Does NOT auto-send. Staff presses Send manually.
  */
 export function openWhatsAppMessage(phone?: string | null, text?: string): boolean {
-  if (!text) {
+  if (text !== undefined && !text.trim()) {
     toast.error("Message content is empty.");
     return false;
   }
 
-  const normalized = normalizeIndianPhoneNumber(phone);
-  if (!normalized) {
-    toast.error("WhatsApp number is not available for this patient.");
+  const check = validateAndNormalizePhone(phone);
+  if (!check.valid || !check.phone) {
+    toast.error(check.error || "Invalid patient phone number. Please check the patient's phone number.");
     return false;
   }
 
-  const encoded = encodeURIComponent(text);
-  const url = `https://wa.me/${normalized}?text=${encoded}`;
-
-  window.open(url, "_blank", "noopener,noreferrer");
+  const url = buildWhatsAppDirectUrl(check.phone, text);
+  launchWhatsAppUrl(url);
   return true;
 }

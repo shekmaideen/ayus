@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowUpDown, Search, UserPlus, Users } from "lucide-react";
+import { ArrowUpDown, History, Search, UserPlus, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import { AppShell, PageTitle } from "@/components/AppShell";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -13,9 +13,9 @@ import { formatDate, initials } from "@/lib/format";
 export const Route = createFileRoute("/patients/")({
   head: () => ({
     meta: [
-      { title: "Patients — HomeoCare Clinic Manager" },
+      { title: "Patients — Dr. Ayus Homoeopathy Hospital" },
       { name: "description", content: "Search, filter and open patient records for the homeopathy clinic." },
-      { property: "og:title", content: "Patients — HomeoCare Clinic Manager" },
+      { property: "og:title", content: "Patients — Dr. Ayus Homoeopathy Hospital" },
       { property: "og:description", content: "Search, filter and open patient records for the homeopathy clinic." },
     ],
   }),
@@ -61,11 +61,18 @@ function PatientList() {
         title="Patients"
         subtitle={`${filtered.length} of ${patients.length} records`}
         action={
-          <Button asChild className="rounded-xl">
-            <Link to="/patients/new">
-              <UserPlus className="mr-2 h-4 w-4" /> Register patient
-            </Link>
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button asChild variant="outline" className="rounded-xl border-amber-600/30 text-amber-700 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30">
+              <Link to="/patients/new" search={{ mode: "old" }}>
+                <History className="mr-2 h-4 w-4" /> Register old patient
+              </Link>
+            </Button>
+            <Button asChild className="rounded-xl">
+              <Link to="/patients/new">
+                <UserPlus className="mr-2 h-4 w-4" /> Register patient
+              </Link>
+            </Button>
+          </div>
         }
       />
 

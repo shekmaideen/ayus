@@ -19,7 +19,7 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, memo, type ReactNode } from "react";
 import { toast } from "sonner";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -62,7 +62,7 @@ const NAV = [
   { to: "/settings", label: "Settings", icon: SettingsIcon, feature: "settings" },
 ] as const;
 
-function SidebarNav({ onNavigate, collapsed }: { onNavigate?: () => void; collapsed: boolean }) {
+const SidebarNav = memo(function SidebarNav({ onNavigate, collapsed }: { onNavigate?: () => void; collapsed: boolean }) {
   const role = useClinic((s) => s.role);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
 
@@ -75,6 +75,7 @@ function SidebarNav({ onNavigate, collapsed }: { onNavigate?: () => void; collap
           <Link
             key={item.to}
             to={item.to}
+            preload="intent"
             onClick={onNavigate}
             className={cn(
               "group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
@@ -91,9 +92,9 @@ function SidebarNav({ onNavigate, collapsed }: { onNavigate?: () => void; collap
       })}
     </nav>
   );
-}
+});
 
-function GlobalSearch() {
+const GlobalSearch = memo(function GlobalSearch() {
   const patients = useClinic((s) => s.patients);
   const [q, setQ] = useState("");
   const navigate = useNavigate();
@@ -139,15 +140,38 @@ function GlobalSearch() {
       )}
     </div>
   );
-}
+});
 
-function Notifications() {
-  const { followUps, bills, medicines, settings, patients } = useClinic();
+const Notifications = memo(function Notifications() {
+  const followUps = useClinic((s) => s.followUps);
+  const bills = useClinic((s) => s.bills);
+  const medicines = useClinic((s) => s.medicines);
+  const lowStockThreshold = useClinic((s) => s.settings.lowStockThreshold);
+  const patients = useClinic((s) => s.patients);
+
   const today = todayISO();
-  const dueToday = followUps.filter((f) => f.status === "Pending" && f.dueDate === today);
-  const pendingBills = bills.filter((b) => b.status !== "Paid").slice(0, 3);
-  const lowStock = medicines.filter((m) => m.stock < settings.lowStockThreshold);
-  const count = dueToday.length + lowStock.length;
+  const dueToday = useMemo(
+    () => followUps.filter((f) => f.status === "Pending" && f.dueDate === today),
+    [followUps, today],
+  );
+  const pendingBills = useMemo(
+    () => bills.filter((b) => b.status !== "Paid").slice(0, 3),
+    [bills],
+  );
+  const { lowStockCount, topLowStock } = useMemo(() => {
+    let count = 0;
+    const top: typeof medicines = [];
+    for (const m of medicines) {
+      if (!m) continue;
+      if (m.stock < lowStockThreshold) {
+        count++;
+        if (top.length < 4) top.push(m);
+      }
+    }
+    return { lowStockCount: count, topLowStock: top };
+  }, [medicines, lowStockThreshold]);
+
+  const count = dueToday.length + lowStockCount;
   const nameOf = (id: string) => patients.find((p) => p.id === id)?.name ?? "Patient";
 
   return (
@@ -173,7 +197,7 @@ function Notifications() {
               </p>
             </div>
           ))}
-          {lowStock.slice(0, 4).map((m) => (
+          {topLowStock.map((m) => (
             <div key={m.id} className="rounded-lg px-2 py-2 hover:bg-secondary">
               <p className="font-medium text-destructive">Low stock: {m.name}</p>
               <p className="text-xs text-muted-foreground">{m.stock} units remaining</p>
@@ -194,9 +218,9 @@ function Notifications() {
       </PopoverContent>
     </Popover>
   );
-}
+});
 
-export function signOutEverywhere() {
+function signOutEverywhere() {
   sessionStorage.removeItem("hc_token");
   document.cookie = "hc_token=; path=/; max-age=0";
   useClinic.getState().clear();
@@ -265,6 +289,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [changePwOpen, setChangePwOpen] = useState(false);
   const [overdubDismissed, setOverdueDismissed] = useState(false);
+  const [slowLoad, setSlowLoad] = useState(false);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const today = todayISO();
   const overdueCount = followUps.filter((f) => f.status === "Pending" && f.dueDate < today).length;
@@ -273,11 +298,50 @@ export function AppShell({ children }: { children: ReactNode }) {
     if (hydrated && loaded && !loggedIn) navigate({ to: "/", replace: true });
   }, [hydrated, loaded, loggedIn, navigate]);
 
+  useEffect(() => {
+    if (loaded) return;
+    const timer = setTimeout(() => {
+      setSlowLoad(true);
+      void useClinic.getState().loadAll();
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [loaded]);
+
   if (!hydrated || !loaded || !loggedIn) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-center bg-background">
+      <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
         <p className="mt-4 font-medium text-muted-foreground animate-pulse tracking-wide">Loading...</p>
+        {slowLoad && (
+          <div className="mt-6 flex flex-col items-center gap-2 animate-in fade-in">
+            <p className="text-xs text-muted-foreground">Loading is taking longer than usual.</p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  void useClinic.getState().loadAll();
+                }}
+                className="text-xs rounded-lg"
+              >
+                Retry
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  sessionStorage.removeItem("hc_token");
+                  document.cookie = "hc_token=; path=/; max-age=0";
+                  useClinic.getState().clear();
+                  navigate({ to: "/", replace: true });
+                }}
+                className="text-xs rounded-lg text-muted-foreground hover:text-foreground"
+              >
+                Sign in again
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -382,29 +446,21 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        <AnimatePresence mode="wait">
-          <motion.main
-            key={pathname}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25, ease: "easeOut" }}
-            className="flex-1 px-4 py-6 md:px-8 md:py-8"
-          >
-            {overdueCount > 0 && !overdubDismissed && (
-              <div className="no-print mb-6 flex items-center gap-3 rounded-xl border border-destructive/30 bg-danger-soft px-4 py-3 text-sm">
-                <CalendarClock className="h-4 w-4 shrink-0 text-destructive" />
-                <span className="flex-1 text-destructive">
-                  <strong>{overdueCount} patient{overdueCount > 1 ? "s have" : " has"} overdue follow-up{overdueCount > 1 ? "s" : ""}.</strong>{" "}
-                  <Link to="/follow-ups" className="underline underline-offset-2">View &amp; action now →</Link>
-                </span>
-                <button onClick={() => setOverdueDismissed(true)} aria-label="Dismiss" className="rounded p-0.5 hover:bg-destructive/10">
-                  <X className="h-4 w-4 text-destructive" />
-                </button>
-              </div>
-            )}
-            {children}
-          </motion.main>
-        </AnimatePresence>
+        <main className="flex-1 px-4 py-6 md:px-8 md:py-8">
+          {overdueCount > 0 && !overdubDismissed && (
+            <div className="no-print mb-6 flex items-center gap-3 rounded-xl border border-destructive/30 bg-danger-soft px-4 py-3 text-sm">
+              <CalendarClock className="h-4 w-4 shrink-0 text-destructive" />
+              <span className="flex-1 text-destructive">
+                <strong>{overdueCount} patient{overdueCount > 1 ? "s have" : " has"} overdue follow-up{overdueCount > 1 ? "s" : ""}.</strong>{" "}
+                <Link to="/follow-ups" className="underline underline-offset-2">View &amp; action now →</Link>
+              </span>
+              <button onClick={() => setOverdueDismissed(true)} aria-label="Dismiss" className="rounded p-0.5 hover:bg-destructive/10">
+                <X className="h-4 w-4 text-destructive" />
+              </button>
+            </div>
+          )}
+          {children}
+        </main>
       </div>
     </div>
   );

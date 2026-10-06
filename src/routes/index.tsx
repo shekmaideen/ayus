@@ -14,10 +14,10 @@ import { useClinic } from "@/store/clinic";
 export const Route = createFileRoute("/")(({
   head: () => ({
     meta: [
-      { title: "Sign in — HomeoCare Clinic Manager" },
-      { name: "description", content: "Staff sign-in for the HomeoCare homeopathy clinic manager." },
-      { property: "og:title", content: "Sign in — HomeoCare Clinic Manager" },
-      { property: "og:description", content: "Staff sign-in for the HomeoCare homeopathy clinic manager." },
+      { title: "Sign in — Dr. Ayus Homoeopathy Hospital" },
+      { name: "description", content: "Staff sign-in for Dr. Ayus Homoeopathy Hospital clinic manager." },
+      { property: "og:title", content: "Sign in — Dr. Ayus Homoeopathy Hospital" },
+      { property: "og:description", content: "Staff sign-in for Dr. Ayus Homoeopathy Hospital clinic manager." },
     ],
   }),
   component: LoginPage,
@@ -33,7 +33,7 @@ const errMsg = (e: unknown) => {
 
 function LoginPage() {
   const navigate = useNavigate();
-  const { loggedIn, loaded } = useClinic();
+  const { loggedIn, loaded, userName, role, clear } = useClinic();
   const status = useServerFn(getSetupStatus);
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
   const [publicName, setPublicName] = useState<string | null>(null);
@@ -47,13 +47,9 @@ function LoginPage() {
     }).catch(() => setNeedsSetup(false));
   }, [status]);
 
-  useEffect(() => {
-    if (loaded && loggedIn) navigate({ to: "/dashboard", replace: true });
-  }, [loaded, loggedIn, navigate]);
-
   const activeSettings = useClinic.getState().settings;
   const displayLogo = publicLogo || activeSettings.logoDataUrl;
-  const displayName = publicName || (activeSettings.clinicName !== "HomeoCare Clinic" ? activeSettings.clinicName : "HomeoCare Clinic");
+  const displayName = publicName || (activeSettings.clinicName !== "Dr. Ayus Homoeopathy Hospital" ? activeSettings.clinicName : "Dr. Ayus Homoeopathy Hospital");
 
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
@@ -94,6 +90,27 @@ function LoginPage() {
             <p className="mt-6 text-sm text-muted-foreground">Loading…</p>
           ) : needsSetup ? (
             <SetupForm onDone={() => setNeedsSetup(false)} />
+          ) : loaded && loggedIn ? (
+            <div className="space-y-4">
+              <h2 className="mt-4 font-display text-3xl">Already signed in</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                You are currently signed in as <span className="font-semibold text-foreground">{userName || "Staff"}</span> ({role}).
+              </p>
+              <div className="pt-4 flex flex-col gap-3">
+                <Button onClick={() => navigate({ to: "/dashboard", replace: true })} className="h-11 w-full rounded-xl">
+                  Go to Dashboard
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    clear();
+                  }}
+                  className="h-11 w-full rounded-xl"
+                >
+                  Sign in as different user
+                </Button>
+              </div>
+            </div>
           ) : (
             <SignInForm />
           )}
@@ -122,13 +139,17 @@ function SignInForm() {
           setBusy(true);
           try {
             const result = await doSignIn({ data: { identifier: identifier.trim(), password } });
-            // Store token for server function calls
+            // Store token for server function calls (session only, not 30-day persistent)
             sessionStorage.setItem("hc_token", result.token);
-            document.cookie = `hc_token=${result.token}; path=/; max-age=2592000`;
+            document.cookie = `hc_token=${result.token}; path=/; SameSite=Lax`;
             // Set auth in Zustand
             setAuth({ userId: result.userId, role: result.role, userName: result.userName });
-            // Load all clinic data
-            await loadAll();
+            // Load all clinic data with fallback
+            try {
+              await loadAll();
+            } catch (err) {
+              console.warn("[SignIn] loadAll warning:", err);
+            }
             toast.success("Signed in");
             navigate({ to: "/dashboard", replace: true });
           } catch (err) {
@@ -196,9 +217,13 @@ function SetupForm({ onDone }: { onDone: () => void }) {
             const result = await create({ data: f });
             // Store token returned directly from setup
             sessionStorage.setItem("hc_token", result.token);
-            document.cookie = `hc_token=${result.token}; path=/; max-age=2592000`;
+            document.cookie = `hc_token=${result.token}; path=/; SameSite=Lax`;
             setAuth({ userId: result.userId, role: result.role, userName: result.userName });
-            await loadAll();
+            try {
+              await loadAll();
+            } catch (err) {
+              console.warn("[Setup] loadAll warning:", err);
+            }
             toast.success("Clinic set up — welcome!");
             onDone();
             navigate({ to: "/dashboard", replace: true });

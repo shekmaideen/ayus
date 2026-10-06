@@ -14,7 +14,7 @@ import { toast } from "sonner";
 
 import appCss from "../styles.css?url";
 import { Toaster } from "@/components/ui/sonner";
-import { useClinic } from "@/store/clinic";
+import { useClinic, getStoredToken } from "@/store/clinic";
 import { useIdleTimeout } from "@/hooks/use-idle-timeout";
 
 function NotFoundComponent() {
@@ -79,9 +79,9 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Dr. Ayus Homeopathy Hospital" },
-      { name: "description", content: "Hospital & Clinic Management System for Dr. Ayus Homeopathy Hospital." },
-      { name: "author", content: "Dr. Ayus Homeopathy Hospital" },
+      { title: "Dr. Ayus Homoeopathy Hospital" },
+      { name: "description", content: "Hospital & Clinic Management System for Dr. Ayus Homoeopathy Hospital." },
+      { name: "author", content: "Dr. Ayus Homoeopathy Hospital" },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
@@ -127,7 +127,7 @@ function ThemeSync() {
 function AuthSync() {
   useEffect(() => {
     // Restore session from stored JWT token on every page load
-    const token = sessionStorage.getItem("hc_token");
+    const token = getStoredToken();
     if (token) {
       void useClinic.getState().loadAll();
     } else {

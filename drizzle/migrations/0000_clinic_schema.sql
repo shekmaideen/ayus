@@ -124,7 +124,7 @@ create table public.clinic_settings (
   follow_up_fee numeric not null default 250,
   registration_fee numeric not null default 100,
   low_stock_threshold int not null default 10,
-  clinic_name text not null default 'HomeoCare Clinic',
+  clinic_name text not null default 'Dr. Ayus Homoeopathy Hospital',
   address text not null default '',
   phone text not null default '',
   doctor_name text not null default '',

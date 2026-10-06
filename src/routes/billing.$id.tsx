@@ -14,13 +14,22 @@ import { formatDate, inr } from "@/lib/format";
 import type { BillStatus } from "@/data/types";
 import { WhatsAppButton } from "@/components/WhatsAppButton";
 import { buildBillingMessage, openWhatsAppMessage } from "@/lib/whatsapp";
+import { BillPrintSheet } from "@/components/BillPrintSheet";
+import {
+  getBillPdfFilename,
+  generatePdfFromElement,
+  renderAndGeneratePdf,
+  downloadPdfFile,
+  sharePdfViaWhatsApp,
+  validateAndNormalizePhone,
+} from "@/lib/pdf-share";
 
 export const Route = createFileRoute("/billing/$id")({
   head: () => ({
     meta: [
-      { title: "Invoice — HomeoCare Clinic Manager" },
+      { title: "Invoice — Dr. Ayus Homoeopathy Hospital" },
       { name: "description", content: "Itemised clinic invoice with payment status and printable receipt." },
-      { property: "og:title", content: "Invoice — HomeoCare Clinic Manager" },
+      { property: "og:title", content: "Invoice — Dr. Ayus Homoeopathy Hospital" },
       { property: "og:description", content: "Itemised clinic invoice with payment status and printable receipt." },
     ],
   }),
@@ -60,30 +69,71 @@ function BillDetail() {
   const total = billTotal(bill);
   const balance = total - bill.amountReceived;
 
-  const handleSendWhatsApp = () => {
-    if (!bill) {
-      toast.error("Please save the bill before sending the WhatsApp message.");
-      return;
+  const [pdfLoading, setPdfLoading] = useState(false);
+
+  const getBillPdfFile = async (): Promise<File | null> => {
+    if (!bill || !patient) return null;
+    const filename = getBillPdfFilename(bill.invoiceNo);
+    const element = document.getElementById("ayus-bill-document");
+    if (element) {
+      return await generatePdfFromElement(element, filename);
     }
-    if (!patient) {
-      toast.error("Patient details not found for this bill.");
+    return await renderAndGeneratePdf(
+      <BillPrintSheet bill={bill} patient={patient} settings={settings} />,
+      filename
+    );
+  };
+
+  const handleDownloadPdf = async () => {
+    try {
+      setPdfLoading(true);
+      const file = await getBillPdfFile();
+      if (!file) {
+        toast.error("Unable to generate the PDF. Please try again.");
+        return;
+      }
+      downloadPdfFile(file, file.name);
+      toast.success("Bill PDF downloaded successfully.");
+    } catch (err) {
+      console.error(err);
+      toast.error("Unable to generate the PDF. Please try again.");
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  const handleSendWhatsAppPdf = async () => {
+    if (!bill || !patient) {
+      toast.error("Bill or patient details not found.");
       return;
     }
 
-    const message = buildBillingMessage({
-      clinicName: settings.clinicName,
-      patientName: patient.name,
-      billNo: bill.invoiceNo,
-      date: bill.date,
-      items: bill.items.map((it) => ({
-        label: it.label,
-        qty: it.qty,
-        rate: it.rate,
-      })),
-      totalAmount: total,
-    });
+    const phoneCheck = validateAndNormalizePhone(patient.phone);
+    if (!phoneCheck.valid) {
+      toast.error(phoneCheck.error);
+      return;
+    }
 
-    openWhatsAppMessage(patient.phone, message);
+    try {
+      setPdfLoading(true);
+      const file = await getBillPdfFile();
+      if (!file) {
+        toast.error("Unable to generate the PDF. Please try again.");
+        return;
+      }
+      await sharePdfViaWhatsApp({
+        file,
+        phone: patient.phone,
+        patientName: patient.name,
+        docType: "bill",
+        billNumber: bill.invoiceNo,
+      });
+    } catch (err) {
+      console.error(err);
+      toast.error("Unable to generate the PDF. Please try again.");
+    } finally {
+      setPdfLoading(false);
+    }
   };
 
   return (
@@ -93,72 +143,28 @@ function BillDetail() {
           <Link to="/billing"><ArrowLeft className="mr-1.5 h-4 w-4" /> All bills</Link>
         </Button>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" className="rounded-xl" onClick={() => window.print()}>
-            <Printer className="mr-2 h-4 w-4" /> Print receipt
+          <Button variant="outline" className="rounded-xl shadow-sm" onClick={() => window.print()}>
+            <Printer className="mr-2 h-4 w-4 text-emerald-600" /> Print receipt
           </Button>
-          <Button variant="outline" className="rounded-xl" onClick={() => window.print()}>
-            <FileDown className="mr-2 h-4 w-4" /> Download PDF
+          <Button
+            variant="outline"
+            className="rounded-xl shadow-sm"
+            disabled={pdfLoading}
+            onClick={handleDownloadPdf}
+          >
+            <FileDown className="mr-2 h-4 w-4 text-primary" /> Save as PDF
           </Button>
-          <WhatsAppButton onClick={handleSendWhatsApp} />
+          <WhatsAppButton
+            label="Send WhatsApp PDF"
+            loading={pdfLoading}
+            onClick={handleSendWhatsAppPdf}
+          />
         </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <div className="print-sheet card-soft p-8 lg:col-span-2">
-          <div className="flex flex-wrap items-start justify-between gap-4 border-b pb-5">
-            <div className="flex items-center gap-3">
-              {settings.logoDataUrl ? (
-                <img src={settings.logoDataUrl} alt="Clinic logo" className="h-12 w-12 rounded-lg object-cover" />
-              ) : (
-                <LeafMark className="h-12 w-12 text-primary" />
-              )}
-              <div>
-                <p className="font-display text-2xl">{settings.clinicName}</p>
-                <p className="text-xs text-muted-foreground">{settings.address}</p>
-                <p className="text-xs text-muted-foreground">{settings.phone}</p>
-              </div>
-            </div>
-            <div className="text-right">
-              <p className="font-display text-xl">Receipt</p>
-              <p className="font-mono text-sm">{bill.invoiceNo}</p>
-              <p className="text-xs text-muted-foreground">{formatDate(bill.date)}</p>
-            </div>
-          </div>
-
-          <div className="grid gap-1 border-b py-4 text-sm sm:grid-cols-2">
-            <p><span className="text-muted-foreground">Billed to:</span> <strong>{patient.name}</strong></p>
-            <p><span className="text-muted-foreground">Reg No:</span> {patient.regNo}</p>
-            <p><span className="text-muted-foreground">Phone:</span> {patient.phone}</p>
-            <p><span className="text-muted-foreground">Status:</span> {bill.status}</p>
-          </div>
-
-          <table className="mt-4 w-full text-sm">
-            <thead className="border-b text-left text-xs uppercase tracking-wider text-muted-foreground">
-              <tr><th className="py-2">Item</th><th className="w-16 text-right">Qty</th><th className="w-24 text-right">Rate</th><th className="w-28 text-right">Amount</th></tr>
-            </thead>
-            <tbody className="divide-y">
-              {bill.items.map((it, i) => (
-                <tr key={`${it.label}-${i}`}>
-                  <td className="py-2.5">{it.label}</td>
-                  <td className="text-right">{it.qty}</td>
-                  <td className="text-right">{inr(it.rate)}</td>
-                  <td className="text-right font-medium">{inr(it.qty * it.rate)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-
-          <div className="mt-5 ml-auto w-full max-w-xs space-y-2 text-sm">
-            <div className="flex justify-between"><span className="text-muted-foreground">Subtotal</span><span>{inr(total)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Received</span><span>{inr(bill.amountReceived)}</span></div>
-            <div className="flex justify-between border-t pt-2 font-display text-xl">
-              <span>Balance</span><span>{inr(balance)}</span>
-            </div>
-          </div>
-
-          <p className="mt-8 text-center text-xs text-muted-foreground">
-            Thank you for visiting {settings.clinicName}. Wishing you good health.
-          </p>
+        <div className="lg:col-span-2 overflow-x-auto">
+          <BillPrintSheet bill={bill} patient={patient} settings={settings} />
         </div>
 
         <div className="no-print space-y-4">

@@ -10,9 +10,8 @@ import { users, clinicSettings, loginAttempts } from "@/lib/schema";
 import { hashPassword, verifyPassword, signToken } from "@/lib/auth";
 import { requireAuth, assertDoctor } from "@/lib/auth-middleware";
 import { logAudit } from "@/lib/audit";
+import { uid } from "@/lib/utils";
 
-const crypto = globalThis.crypto;
-const uid = () => crypto.randomUUID();
 const now = () => new Date().toISOString().slice(0, 19).replace("T", " "); // MySQL DATETIME format
 
 const MAX_FAILED_ATTEMPTS = 5;
@@ -230,7 +229,7 @@ export const addStaff = createServerFn({ method: "POST" })
     const taken = await db.select({ id: users.id }).from(users).where(eq(users.username, data.username)).limit(1);
     if (taken.length > 0) throw new Error("That username is already taken.");
 
-    const email = data.email || `${data.username}@staff.homeocare.local`;
+    const email = data.email || `${data.username}@staff.ayus.local`;
     const hashed = await hashPassword(data.password);
     const newId = uid();
     await db.insert(users).values({

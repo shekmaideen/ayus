@@ -20,13 +20,13 @@ import {
   clinicSettings,
   users,
   auditLogs,
+  chiefComplaints,
 } from "@/lib/schema";
 import { requireAuth, assertDoctor } from "@/lib/auth-middleware";
 import { logAudit } from "@/lib/audit";
 import { ensureDailyBackup } from "@/lib/auto-backup";
+import { uid } from "@/lib/utils";
 
-const crypto = globalThis.crypto;
-const uid = () => crypto.randomUUID();
 const nowStr = () => new Date().toISOString().slice(0, 19).replace("T", " ");
 
 // ─────────────────────────────────────────────────────────────────
@@ -35,11 +35,13 @@ const nowStr = () => new Date().toISOString().slice(0, 19).replace("T", " ");
 export const loadClinicData = createServerFn({ method: "GET" })
   .middleware([requireAuth])
   .handler(async ({ context }) => {
-    // Trigger daily auto-backup non-blockingly
-    ensureDailyBackup().catch((err) => console.error("[AutoBackup] error:", err));
+    // Trigger daily auto-backup asynchronously after 5s so it doesn't contend with initial login queries
+    setTimeout(() => {
+      ensureDailyBackup().catch((err) => console.error("[AutoBackup] error:", err));
+    }, 5000);
 
     const [
-      meArray, pats, chs, vis, meds, pres, bls, fus, tpls, settings,
+      meArray, pats, chs, vis, meds, pres, bls, fus, tpls, settings, ccs,
     ] = await Promise.all([
       db.select().from(users).where(eq(users.id, context.userId)).limit(1),
       db.select().from(patients).orderBy(desc(patients.createdAt)),
@@ -51,6 +53,7 @@ export const loadClinicData = createServerFn({ method: "GET" })
       db.select().from(followUps).orderBy(asc(followUps.dueDate)),
       db.select().from(templates).orderBy(asc(templates.name)),
       db.select().from(clinicSettings).where(eq(clinicSettings.id, 1)).limit(1),
+      db.select().from(chiefComplaints).orderBy(desc(chiefComplaints.createdAt)),
     ]);
     const me = meArray[0];
     if (!me) throw new Error("User not found");
@@ -66,6 +69,7 @@ export const loadClinicData = createServerFn({ method: "GET" })
       fus,
       tpls,
       settings: settings[0] ?? null,
+      ccs,
     };
   });
 
@@ -98,6 +102,7 @@ export const updatePatient = createServerFn({ method: "POST" })
   .validator((d) => z.object({
     id: z.string(),
     patch: z.object({
+      regNo: z.string().optional(),
       name: z.string().optional(), age: z.number().optional(), gender: z.string().optional(),
       phone: z.string().optional(), email: z.string().optional(), address: z.string().optional(),
       bloodGroup: z.string().optional(), allergies: z.array(z.string()).optional(),
@@ -153,6 +158,91 @@ export const insertVisit = createServerFn({ method: "POST" })
   }).parse(d))
   .handler(async ({ data }) => {
     await db.insert(visits).values({ ...data, createdAt: nowStr() });
+    return { ok: true };
+  });
+
+// ─────────────────────────────────────────────────────────────────
+// CHIEF COMPLAINTS (Chronological History)
+// ─────────────────────────────────────────────────────────────────
+export const insertChiefComplaint = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .validator((d) => z.object({
+    id: z.string().optional(),
+    patientId: z.string(),
+    visitId: z.string().nullable().optional(),
+    complaint: z.string().trim().min(1, "Complaint is required"),
+    createdAt: z.string().optional(),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const id = data.id || uid();
+    const createdAt = data.createdAt || nowStr();
+    await db.insert(chiefComplaints).values({
+      id,
+      patientId: data.patientId,
+      visitId: data.visitId || null,
+      complaint: data.complaint,
+      createdAt,
+    });
+
+    await logAudit({
+      userId: context.userId,
+      userName: context.role === "doctor" ? "Doctor" : "Receptionist",
+      action: "ADD_CHIEF_COMPLAINT",
+      entityType: "patient",
+      entityId: data.patientId,
+      details: { complaintId: id, complaint: data.complaint, visitId: data.visitId },
+    });
+
+    return { ok: true, id, createdAt };
+  });
+
+export const updateChiefComplaint = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .validator((d) => z.object({
+    id: z.string(),
+    complaint: z.string().trim().min(1, "Complaint is required").optional(),
+    visitId: z.string().nullable().optional(),
+    createdAt: z.string().optional(),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const updatedAt = nowStr();
+    const patch: Record<string, unknown> = { updatedAt };
+    if (data.complaint !== undefined) patch["complaint"] = data.complaint;
+    if (data.visitId !== undefined) patch["visitId"] = data.visitId || null;
+    if (data.createdAt !== undefined) patch["createdAt"] = data.createdAt;
+    await db
+      .update(chiefComplaints)
+      .set(patch)
+      .where(eq(chiefComplaints.id, data.id));
+
+    await logAudit({
+      userId: context.userId,
+      userName: context.role === "doctor" ? "Doctor" : "Receptionist",
+      action: "UPDATE_CHIEF_COMPLAINT",
+      entityType: "chief_complaint",
+      entityId: data.id,
+      details: patch,
+    });
+
+    return { ok: true, updatedAt };
+  });
+
+export const deleteChiefComplaint = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .validator((d) => z.object({
+    id: z.string(),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    await db.delete(chiefComplaints).where(eq(chiefComplaints.id, data.id));
+
+    await logAudit({
+      userId: context.userId,
+      userName: context.role === "doctor" ? "Doctor" : "Receptionist",
+      action: "DELETE_CHIEF_COMPLAINT",
+      entityType: "chief_complaint",
+      entityId: data.id,
+    });
+
     return { ok: true };
   });
 
@@ -352,6 +442,58 @@ export const savePrescriptionFull = createServerFn({ method: "POST" })
   });
 
 // ─────────────────────────────────────────────────────────────────
+// UPDATE PRESCRIPTION
+// ─────────────────────────────────────────────────────────────────
+export const updatePrescriptionFull = createServerFn({ method: "POST" })
+  .middleware([requireAuth])
+  .validator((d) =>
+    z.object({
+      id: z.string(),
+      items: z.array(z.unknown()),
+      followUpDate: z.string().nullable().optional(),
+      notes: z.string().optional(),
+      date: z.string().optional(),
+    }).parse(d)
+  )
+  .handler(async ({ data, context }) => {
+    assertDoctor(context.role);
+
+    const updateFields: {
+      items: any[];
+      followUpDate?: string | null;
+      notes?: string;
+      date?: string;
+    } = {
+      items: data.items,
+    };
+    if (data.followUpDate !== undefined) {
+      updateFields.followUpDate = data.followUpDate ?? null;
+    }
+    if (data.notes !== undefined) {
+      updateFields.notes = data.notes;
+    }
+    if (data.date !== undefined) {
+      updateFields.date = data.date;
+    }
+
+    await db.update(prescriptions).set(updateFields).where(eq(prescriptions.id, data.id));
+
+    await logAudit({
+      userId: context.userId,
+      userName: "Doctor",
+      action: "UPDATE_PRESCRIPTION",
+      entityType: "prescription",
+      entityId: data.id,
+      details: {
+        itemCount: data.items.length,
+      },
+    });
+
+    return { ok: true };
+  });
+
+
+// ─────────────────────────────────────────────────────────────────
 // BILLS
 // ─────────────────────────────────────────────────────────────────
 export const insertBill = createServerFn({ method: "POST" })
@@ -498,3 +640,4 @@ export const listAuditLogs = createServerFn({ method: "GET" })
       .limit(100);
     return rows;
   });
+

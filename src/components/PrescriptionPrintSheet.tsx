@@ -1,6 +1,6 @@
 import React from "react";
 import type { ClinicSettings, Medicine, Patient, Prescription, Visit } from "@/data/types";
-import { AyusHospitalCrest, AyusMedicalCross, HOSPITAL_INFO, RxSymbol } from "./HospitalBranding";
+import { AyusHospitalCrest, AyusMedicalCross, HOSPITAL_INFO } from "./HospitalBranding";
 
 export interface ClinicalNotesParsed {
   diagnosis: string;
@@ -84,172 +84,222 @@ export function PrescriptionPrintSheet({
     notes.diagnosis || notes.specialInstructions || prescription.followUpDate
   );
 
+  const doctorName = settings?.doctorName || HOSPITAL_INFO.doctorName;
+
   return (
     <article
       id="ayus-prescription-document"
-      className="print-sheet mx-auto w-full max-w-[850px] bg-white text-slate-900 shadow-sm print:shadow-none print:max-w-none print:w-full rounded-xl print:rounded-none p-6 md:p-8 print:p-0 print:m-0"
       style={{
         fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
         color: "#0f172a",
         backgroundColor: "#ffffff",
+        maxWidth: "794px",
+        width: "100%",
+        margin: "0 auto",
+        padding: "28px 36px",
+        boxSizing: "border-box",
       }}
     >
       {/* ─────────────────────────────────────────────────────────────
-          1. HEADER
+          1. HEADER — Logo | Hospital Name | Medical Cross
       ───────────────────────────────────────────────────────────── */}
-      <header className="border-b border-slate-200 pb-3">
-        {/* Top Logo and Hospital Name Row */}
-        <div className="flex items-center justify-between gap-3">
-          {/* Left Hospital Crest Logo */}
-          <div className="w-24 shrink-0 flex items-center justify-start">
+      <header>
+        {/* Top row: Crest | Title | Cross */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px" }}>
+          {/* Left Hospital Crest */}
+          <div style={{ width: "72px", flexShrink: 0, display: "flex", alignItems: "center" }}>
             {settings?.logoDataUrl ? (
-              <img
-                src={settings.logoDataUrl}
-                alt="Hospital Crest"
-                className="h-20 w-20 object-contain"
-              />
+              <img src={settings.logoDataUrl} alt="Hospital Crest" style={{ height: "68px", width: "68px", objectFit: "contain" }} />
             ) : (
-              <AyusHospitalCrest className="h-20 w-20" />
+              <AyusHospitalCrest className="h-16 w-16" />
             )}
           </div>
 
           {/* Center Title */}
-          <div className="flex-1 text-center px-2">
-            <h1
-              className="text-2xl sm:text-3xl font-black tracking-tight text-[#c5161d] font-sans uppercase leading-none"
-              style={{ letterSpacing: "-0.5px" }}
+          <div style={{ flex: 1, textAlign: "center" }}>
+            <div
+              style={{
+                fontSize: "32px",
+                fontWeight: 900,
+                color: "#c5161d",
+                fontFamily: "'Times New Roman', Georgia, serif",
+                letterSpacing: "1px",
+                lineHeight: 1,
+                textTransform: "uppercase",
+              }}
             >
-              Dr. AYUS
-            </h1>
-            <h2
-              className="text-sm sm:text-base font-extrabold tracking-[0.16em] text-[#c5161d] uppercase mt-1 leading-tight font-sans"
-              style={{ letterSpacing: "2.5px" }}
+              DR. AYUS
+            </div>
+            <div
+              style={{
+                fontSize: "13px",
+                fontWeight: 700,
+                color: "#c5161d",
+                letterSpacing: "3.5px",
+                textTransform: "uppercase",
+                marginTop: "3px",
+              }}
             >
               HOMOEOPATHY HOSPITAL
-            </h2>
+            </div>
           </div>
 
           {/* Right Green Medical Cross */}
-          <div className="w-24 shrink-0 flex items-center justify-end">
+          <div style={{ width: "72px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "flex-end" }}>
             <AyusMedicalCross className="h-16 w-16" />
           </div>
         </div>
 
-        {/* Dual color / dashed separator line */}
-        <div className="my-2.5 border-t-2 border-dashed border-[#15803d]" />
+        {/* Dotted separator line */}
+        <div style={{ marginTop: "8px", borderTop: "2px dotted #15803d" }} />
 
-        {/* Doctor Info & Consulting Timings */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-          {/* Doctor Credentials (Left) */}
-          <div className="space-y-0.5">
-            <p className="text-sm font-bold text-[#b91c1c] tracking-tight">
-              {settings?.doctorName || HOSPITAL_INFO.doctorName}
+        {/* Doctor Info (left) + Consulting Timings (right) */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginTop: "6px", gap: "12px" }}>
+          {/* Doctor Credentials */}
+          <div style={{ flex: 1 }}>
+            <p style={{ fontSize: "13px", fontWeight: 700, color: "#c5161d", margin: 0, lineHeight: 1.4 }}>
+              {doctorName}
             </p>
-            <p className="text-xs font-semibold text-[#15803d]">
+            <p style={{ fontSize: "11px", fontWeight: 600, color: "#15803d", margin: "1px 0 0 0", lineHeight: 1.4 }}>
               {HOSPITAL_INFO.doctorDesignation}
             </p>
-            <p className="text-[11px] font-semibold text-slate-800">
+            <p style={{ fontSize: "11px", fontWeight: 500, color: "#1e293b", margin: "1px 0 0 0", lineHeight: 1.4 }}>
               {HOSPITAL_INFO.regNo}
             </p>
           </div>
 
-          {/* Consulting Timings (Right) */}
-          <div className="sm:text-right space-y-0.5 text-[11px]">
-            <p className="font-bold text-[#b91c1c] uppercase tracking-wider text-[11px]">
-              CONSULTING TIMINGS :
+          {/* Consulting Timings */}
+          <div style={{ textAlign: "right", fontSize: "10.5px", lineHeight: 1.5, flexShrink: 0, maxWidth: "260px" }}>
+            <p style={{ fontWeight: 700, color: "#c5161d", fontSize: "11px", textTransform: "uppercase", margin: 0, letterSpacing: "0.5px" }}>
+              CONSULTING TIMINGS
             </p>
-            <p>
-              <strong className="text-[#15803d]">Monday to Sunday :</strong>{" "}
-              <span className="text-slate-800">Morning 10.00 am to 2.00 pm</span>
+            <p style={{ margin: "1px 0 0 0", color: "#1e293b" }}>
+              <span style={{ color: "#15803d", fontWeight: 700 }}>Mon to Sun :</span>
+              {" "}<span style={{ fontWeight: 700 }}>Morning 10:00 AM to 2:00 PM</span>
             </p>
-            <p>
-              <strong className="text-[#15803d]">Monday / Wednesday / Friday :</strong>{" "}
-              <span className="text-slate-800">Evening 5.30 pm to 9.30 pm</span>
+            <p style={{ margin: "1px 0 0 0", color: "#1e293b" }}>
+              <span style={{ color: "#15803d", fontWeight: 700 }}>Mon / Wed / Fri :</span>
+              {" "}<span style={{ fontWeight: 700 }}>Evening 5:30 PM to 9:30 PM</span>
             </p>
-            <p>
-              <strong className="text-[#15803d]">Tuesday / Thursday / Saturday :</strong>{" "}
-              <span className="text-slate-800">Evening 5.30 pm to 7.30 pm</span>
+            <p style={{ margin: "1px 0 0 0", color: "#1e293b" }}>
+              <span style={{ color: "#15803d", fontWeight: 700 }}>Tue / Thu / Sat :</span>
+              {" "}<span style={{ fontWeight: 700 }}>Evening 5:30 PM to 7:30 PM</span>
             </p>
           </div>
         </div>
       </header>
 
       {/* ─────────────────────────────────────────────────────────────
-          2. PATIENT INFORMATION BOX
+          2. PATIENT INFORMATION BOX — horizontal rows
       ───────────────────────────────────────────────────────────── */}
-      <section className="my-3 rounded-lg border border-slate-300 bg-[#fbfcfd] p-3 text-xs print:bg-white print:border-slate-400">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5">
-          <div className="flex items-center">
-            <span className="w-28 shrink-0 font-medium text-slate-600">Patient Name:</span>
-            <span className="font-bold text-slate-900 text-sm">{patient.name}</span>
+      <section
+        style={{
+          marginTop: "14px",
+          border: "1px solid #cbd5e1",
+          borderRadius: "6px",
+          padding: "10px 14px",
+          fontSize: "11.5px",
+          backgroundColor: "#f8fafc",
+        }}
+      >
+        {/* Row 1: Patient Name | Reg. ID | Date */}
+        <div style={{ display: "flex", alignItems: "flex-start", gap: "16px", flexWrap: "nowrap" }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: "4px", flex: "2 1 0", minWidth: 0 }}>
+            <span style={{ color: "#c5161d", fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>Patient Name:</span>
+            <span style={{ fontWeight: 700, color: "#0f172a", wordBreak: "break-word" }}>{patient.name}</span>
           </div>
-          <div className="flex items-center">
-            <span className="w-28 shrink-0 font-medium text-slate-600">Reg. ID:</span>
-            <span className="font-bold font-mono text-slate-900">{patient.regNo}</span>
+          <div style={{ display: "flex", alignItems: "center", gap: "4px", flex: "1.5 1 0", minWidth: 0 }}>
+            <span style={{ color: "#64748b", fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>Reg. ID:</span>
+            <span style={{ fontWeight: 700, color: "#0f172a", fontFamily: "monospace", fontSize: "10.5px", wordBreak: "break-all" }}>{patient.regNo}</span>
           </div>
-
-          <div className="flex items-center">
-            <span className="w-28 shrink-0 font-medium text-slate-600">Age / Sex:</span>
-            <span className="font-semibold text-slate-900">
-              {patient.age} Yrs / {patient.gender}
-            </span>
+          <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
+            <span style={{ color: "#64748b", fontWeight: 600, whiteSpace: "nowrap" }}>Date:</span>
+            <span style={{ fontWeight: 700, color: "#0f172a", whiteSpace: "nowrap" }}>{formatPrescriptionDate(prescription.date)}</span>
           </div>
-          <div className="flex items-center">
-            <span className="w-28 shrink-0 font-medium text-slate-600">Date:</span>
-            <span className="font-bold text-slate-900">
-              {formatPrescriptionDate(prescription.date)}
-            </span>
-          </div>
-
-          <div className="flex items-center">
-            <span className="w-28 shrink-0 font-medium text-slate-600">Phone:</span>
-            <span className="font-semibold text-slate-900">{patient.phone || "—"}</span>
-          </div>
-          <div className="flex items-center">
-            <span className="w-28 shrink-0 font-medium text-slate-600">Visit Type:</span>
-            <span className="font-semibold text-slate-900">
-              {visit?.type || (prescription.isRefill ? "Refill Visit" : "Consultation")}
-            </span>
-          </div>
-
-          {patient.address && (
-            <div className="col-span-1 sm:col-span-2 flex pt-1 mt-0.5 border-t border-slate-200/70">
-              <span className="w-28 shrink-0 font-medium text-slate-600">Address:</span>
-              <span className="text-slate-800">{patient.address}</span>
-            </div>
-          )}
         </div>
+
+        {/* Row 2: Age/Sex | Doctor | Phone */}
+        <div style={{ display: "flex", alignItems: "center", gap: "16px", marginTop: "5px", flexWrap: "nowrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "4px", flex: "2 1 0" }}>
+            <span style={{ color: "#c5161d", fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>Age / Sex:</span>
+            <span style={{ fontWeight: 600, color: "#0f172a" }}>{patient.age} Yrs / {patient.gender}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "4px", flex: "1.5 1 0", minWidth: 0 }}>
+            <span style={{ color: "#64748b", fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>Doctor:</span>
+            <span style={{ fontWeight: 600, color: "#0f172a", wordBreak: "break-word" }}>{doctorName}</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: "4px", flexShrink: 0 }}>
+            <span style={{ color: "#64748b", fontWeight: 600, whiteSpace: "nowrap" }}>Phone:</span>
+            <span style={{ fontWeight: 600, color: "#0f172a", whiteSpace: "nowrap" }}>{patient.phone || "—"}</span>
+          </div>
+        </div>
+
+        {/* Row 3 (optional): Address */}
+        {patient.address && (
+          <div style={{ display: "flex", alignItems: "flex-start", gap: "4px", marginTop: "5px", paddingTop: "5px", borderTop: "1px solid #e2e8f0" }}>
+            <span style={{ color: "#64748b", fontWeight: 600, whiteSpace: "nowrap", flexShrink: 0 }}>Address:</span>
+            <span style={{ color: "#1e293b", wordBreak: "break-word" }}>{patient.address}</span>
+          </div>
+        )}
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
-          3. PRESCRIPTION SECTION (Rx)
+          3. PRESCRIPTION SECTION — Big R with underline
       ───────────────────────────────────────────────────────────── */}
-      <section className="mt-4">
-        <div className="flex items-baseline gap-2 mb-2">
-          <RxSymbol className="text-3xl text-[#047857]" />
-          <span className="text-xs uppercase font-bold tracking-wider text-slate-500">
-            Prescription
+      <section style={{ marginTop: "16px" }}>
+        {/* Rx Header Row: big R + extending underline */}
+        <div style={{ display: "flex", alignItems: "flex-end", gap: "8px", marginBottom: "8px" }}>
+          <span
+            style={{
+              fontFamily: "'Times New Roman', Georgia, serif",
+              fontSize: "42px",
+              fontWeight: 900,
+              color: "#15803d",
+              lineHeight: 1,
+              display: "inline-block",
+            }}
+          >
+            R
           </span>
+          <div style={{ flex: 1, borderBottom: "2px solid #cbd5e1", marginBottom: "6px" }} />
         </div>
 
-        {/* Clean 10-column table */}
-        <div className="overflow-x-auto print:overflow-visible">
-          <table className="w-full border-collapse text-left text-xs border border-slate-300">
+        {/* Prescription Table */}
+        <div style={{ width: "100%", overflowX: "hidden" }}>
+          <table
+            style={{
+              width: "100%",
+              borderCollapse: "collapse",
+              fontSize: "10.5px",
+              tableLayout: "fixed",
+            }}
+          >
             <thead>
-              <tr className="bg-slate-100 text-slate-800 border-b border-slate-300 uppercase tracking-wide text-[10px] font-bold">
-                <th className="py-2 px-1.5 text-center w-[4%] border-r border-slate-300">No.</th>
-                <th className="py-2 px-2 w-[23%] border-r border-slate-300">Medicine Name</th>
-                <th className="py-2 px-2 w-[10%] border-r border-slate-300">Brand</th>
-                <th className="py-2 px-1.5 text-center w-[8%] border-r border-slate-300">Potency</th>
-                <th className="py-2 px-1.5 w-[8%] border-r border-slate-300">Form</th>
-                <th className="py-2 px-2 w-[11%] border-r border-slate-300">Dosage</th>
-                <th className="py-2 px-2 w-[11%] border-r border-slate-300">Frequency</th>
-                <th className="py-2 px-1.5 w-[9%] border-r border-slate-300">Duration</th>
-                <th className="py-2 px-1 text-center w-[5%] border-r border-slate-300">Qty</th>
-                <th className="py-2 px-2 w-[11%]">Instructions</th>
+              <tr
+                style={{
+                  backgroundColor: "#f1f5f9",
+                  color: "#334155",
+                  borderTop: "1px solid #94a3b8",
+                  borderBottom: "1px solid #94a3b8",
+                  fontSize: "10px",
+                  fontWeight: 700,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.5px",
+                }}
+              >
+                <th style={{ padding: "6px 4px", textAlign: "center", width: "4%", borderRight: "1px solid #cbd5e1" }}>#</th>
+                <th style={{ padding: "6px 6px", textAlign: "left", width: "22%", borderRight: "1px solid #cbd5e1" }}>Medicine Name</th>
+                <th style={{ padding: "6px 5px", textAlign: "left", width: "10%", borderRight: "1px solid #cbd5e1" }}>Brand</th>
+                <th style={{ padding: "6px 4px", textAlign: "center", width: "8%", borderRight: "1px solid #cbd5e1" }}>Potency</th>
+                <th style={{ padding: "6px 5px", textAlign: "left", width: "8%", borderRight: "1px solid #cbd5e1" }}>Form</th>
+                <th style={{ padding: "6px 5px", textAlign: "left", width: "11%", borderRight: "1px solid #cbd5e1" }}>Dosage</th>
+                <th style={{ padding: "6px 5px", textAlign: "left", width: "12%", borderRight: "1px solid #cbd5e1" }}>Frequency</th>
+                <th style={{ padding: "6px 5px", textAlign: "left", width: "9%", borderRight: "1px solid #cbd5e1" }}>Duration</th>
+                <th style={{ padding: "6px 4px", textAlign: "center", width: "4%", borderRight: "1px solid #cbd5e1" }}>Qty</th>
+                <th style={{ padding: "6px 5px", textAlign: "left", width: "12%" }}>Instructions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-200">
+            <tbody>
               {prescription.items.map((item, idx) => {
                 const med = medicines.find((m) => m.id === item.medicineId);
                 const displayBrand = item.brand || med?.brand || "—";
@@ -262,36 +312,36 @@ export function PrescriptionPrintSheet({
                 return (
                   <tr
                     key={item.id || idx}
-                    className="hover:bg-slate-50/70 print:hover:bg-transparent page-break-inside-avoid"
+                    style={{ borderBottom: "1px solid #e2e8f0", verticalAlign: "top" }}
                   >
-                    <td className="py-2 px-1.5 text-center font-medium text-slate-500 border-r border-slate-200">
+                    <td style={{ padding: "6px 4px", textAlign: "center", color: "#64748b", borderRight: "1px solid #e2e8f0", wordBreak: "break-word" }}>
                       {idx + 1}
                     </td>
-                    <td className="py-2 px-2 font-bold text-slate-900 border-r border-slate-200">
+                    <td style={{ padding: "6px 6px", fontWeight: 700, color: "#0f172a", borderRight: "1px solid #e2e8f0", wordBreak: "break-word" }}>
                       {item.medicineName}
                     </td>
-                    <td className="py-2 px-2 text-slate-700 border-r border-slate-200">
+                    <td style={{ padding: "6px 5px", color: "#334155", borderRight: "1px solid #e2e8f0", wordBreak: "break-word" }}>
                       {displayBrand}
                     </td>
-                    <td className="py-2 px-1.5 text-center font-mono font-semibold text-emerald-800 border-r border-slate-200">
+                    <td style={{ padding: "6px 4px", textAlign: "center", fontWeight: 700, color: "#047857", borderRight: "1px solid #e2e8f0", wordBreak: "break-word" }}>
                       {displayPotency}
                     </td>
-                    <td className="py-2 px-1.5 text-slate-700 border-r border-slate-200">
+                    <td style={{ padding: "6px 5px", color: "#334155", borderRight: "1px solid #e2e8f0", wordBreak: "break-word" }}>
                       {displayForm}
                     </td>
-                    <td className="py-2 px-2 text-slate-800 font-medium border-r border-slate-200">
+                    <td style={{ padding: "6px 5px", color: "#1e293b", fontWeight: 500, borderRight: "1px solid #e2e8f0", wordBreak: "break-word" }}>
                       {item.dosage || "—"}
                     </td>
-                    <td className="py-2 px-2 text-slate-800 border-r border-slate-200">
+                    <td style={{ padding: "6px 5px", color: "#1e293b", borderRight: "1px solid #e2e8f0", wordBreak: "break-word" }}>
                       {item.frequency || "—"}
                     </td>
-                    <td className="py-2 px-1.5 text-slate-800 border-r border-slate-200">
+                    <td style={{ padding: "6px 5px", color: "#1e293b", borderRight: "1px solid #e2e8f0", wordBreak: "break-word" }}>
                       {item.duration || "—"}
                     </td>
-                    <td className="py-2 px-1 text-center font-medium text-slate-900 border-r border-slate-200">
+                    <td style={{ padding: "6px 4px", textAlign: "center", fontWeight: 600, color: "#0f172a", borderRight: "1px solid #e2e8f0", wordBreak: "break-word" }}>
                       {item.quantity || 1}
                     </td>
-                    <td className="py-2 px-2 text-slate-700">
+                    <td style={{ padding: "6px 5px", color: "#334155", wordBreak: "break-word" }}>
                       {item.instructions || "—"}
                     </td>
                   </tr>
@@ -303,33 +353,46 @@ export function PrescriptionPrintSheet({
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
-          4. CLINICAL NOTES & SPECIAL INSTRUCTIONS (Only if present)
+          4. CLINICAL NOTES & NEXT REVIEW (if present)
       ───────────────────────────────────────────────────────────── */}
       {hasClinicalSection && (
-        <section className="mt-4 rounded-lg border border-slate-200 bg-slate-50/50 p-3 text-xs print:bg-white print:border-slate-300 space-y-2">
+        <section
+          style={{
+            marginTop: "14px",
+            border: "1px solid #cbd5e1",
+            borderRadius: "6px",
+            padding: "10px 14px",
+            fontSize: "11px",
+            backgroundColor: "#f8fafc",
+          }}
+        >
           {notes.diagnosis && (
-            <div>
-              <span className="font-bold text-slate-800 text-[11px] uppercase tracking-wide">
+            <div style={{ marginBottom: notes.specialInstructions || prescription.followUpDate ? "8px" : "0" }}>
+              <span style={{ fontWeight: 700, color: "#1e293b", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
                 Diagnosis / Clinical Notes:
               </span>
-              <p className="mt-0.5 text-slate-900 whitespace-pre-wrap">{notes.diagnosis}</p>
+              <p style={{ margin: "3px 0 0 0", color: "#0f172a", whiteSpace: "pre-wrap", fontSize: "11px" }}>
+                {notes.diagnosis}
+              </p>
             </div>
           )}
 
           {notes.specialInstructions && (
-            <div>
-              <span className="font-bold text-slate-800 text-[11px] uppercase tracking-wide">
+            <div style={{ marginBottom: prescription.followUpDate ? "8px" : "0" }}>
+              <span style={{ fontWeight: 700, color: "#1e293b", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
                 Special Instructions:
               </span>
-              <p className="mt-0.5 text-slate-900 whitespace-pre-wrap">{notes.specialInstructions}</p>
+              <p style={{ margin: "3px 0 0 0", color: "#0f172a", whiteSpace: "pre-wrap", fontSize: "11px" }}>
+                {notes.specialInstructions}
+              </p>
             </div>
           )}
 
           {prescription.followUpDate && (
-            <div className="pt-1">
-              <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-900">
-                <span>Follow-up Date:</span>
-                <span className="font-bold">{formatPrescriptionDate(prescription.followUpDate)}</span>
+            <div>
+              <span style={{ fontWeight: 700, color: "#0f172a", fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.5px" }}>
+                Next Review / Follow-up Date:{" "}
+                <span style={{ color: "#15803d" }}>{formatPrescriptionDate(prescription.followUpDate)}</span>
               </span>
             </div>
           )}
@@ -337,23 +400,23 @@ export function PrescriptionPrintSheet({
       )}
 
       {/* ─────────────────────────────────────────────────────────────
-          5. DOCTOR SIGNATURE (Bottom Right)
+          5. DOCTOR SIGNATURE — bottom right
       ───────────────────────────────────────────────────────────── */}
-      <section className="mt-6 flex justify-end page-break-inside-avoid">
-        <div className="text-center min-w-[220px]">
-          {/* Dedicated whitespace for physical handwritten signature or clinic stamp */}
-          <div className="h-14"></div>
-          <div className="border-t border-slate-400 pt-1.5">
-            <p className="text-xs font-bold text-slate-900">
-              {settings?.doctorName || HOSPITAL_INFO.doctorName}
+      <section style={{ marginTop: "32px", display: "flex", justifyContent: "flex-end" }}>
+        <div style={{ textAlign: "center", minWidth: "220px" }}>
+          {/* Space for handwritten signature / stamp */}
+          <div style={{ height: "52px" }} />
+          <div style={{ borderTop: "1px solid #94a3b8", paddingTop: "6px" }}>
+            <p style={{ fontSize: "12px", fontWeight: 700, color: "#0f172a", margin: 0 }}>
+              {doctorName}
             </p>
-            <p className="text-[11px] text-[#15803d] font-semibold">
+            <p style={{ fontSize: "11px", color: "#15803d", fontWeight: 600, margin: "2px 0 0 0" }}>
               {HOSPITAL_INFO.doctorDesignation}
             </p>
-            <p className="text-[10px] text-slate-600 font-medium">
+            <p style={{ fontSize: "10px", color: "#475569", fontWeight: 500, margin: "2px 0 0 0" }}>
               {HOSPITAL_INFO.regNo}
             </p>
-            <p className="mt-1 text-[10px] uppercase font-bold tracking-widest text-slate-400">
+            <p style={{ marginTop: "4px", fontSize: "9.5px", textTransform: "uppercase", fontWeight: 700, letterSpacing: "2px", color: "#94a3b8", margin: "4px 0 0 0" }}>
               Doctor&apos;s Signature
             </p>
           </div>
@@ -363,35 +426,62 @@ export function PrescriptionPrintSheet({
       {/* ─────────────────────────────────────────────────────────────
           6. FOOTER
       ───────────────────────────────────────────────────────────── */}
-      <footer className="mt-6 pt-2.5 border-t-2 border-[#16a34a] text-center text-xs page-break-inside-avoid">
-        {/* Tamil Motto from Hospital Letterhead */}
-        <p className="text-[#c5161d] font-bold text-xs tracking-wide">
+      <footer style={{ marginTop: "20px", paddingTop: "10px", borderTop: "2px solid #16a34a", textAlign: "center" }}>
+        {/* Tamil Motto */}
+        <p style={{ color: "#c5161d", fontWeight: 700, fontSize: "12px", letterSpacing: "0.3px", margin: 0 }}>
           {HOSPITAL_INFO.tamilMotto}
         </p>
 
-        {/* Tagline Badge */}
-        <div className="my-1.5 inline-block rounded-full border border-[#16a34a] bg-emerald-50/70 px-4 py-0.5 text-[11px] font-bold text-[#15803d]">
-          &ldquo;{HOSPITAL_INFO.tagline}&rdquo;
+        {/* Tagline pill with green lines on both sides */}
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", margin: "8px 0" }}>
+          <div style={{ flex: 1, borderTop: "1px solid #16a34a" }} />
+          <span
+            style={{
+              display: "inline-block",
+              border: "1px solid #16a34a",
+              borderRadius: "999px",
+              padding: "2px 16px",
+              fontSize: "10.5px",
+              fontWeight: 700,
+              color: "#15803d",
+              whiteSpace: "nowrap",
+            }}
+          >
+            &ldquo;{HOSPITAL_INFO.tagline}&rdquo;
+          </span>
+          <div style={{ flex: 1, borderTop: "1px solid #16a34a" }} />
         </div>
 
-        {/* Hospital Address and Contact Info */}
-        <div className="mt-1 flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 pt-2 text-[10px] sm:text-[11px] text-slate-700">
-          <div className="text-left">
-            <p className="font-bold text-slate-900">
-              {settings?.clinicName || HOSPITAL_INFO.name}
-            </p>
-            <p className="text-slate-600">
-              {settings?.address || HOSPITAL_INFO.address}
-            </p>
+        {/* Address + Contact */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            gap: "12px",
+            borderTop: "1px solid #e2e8f0",
+            paddingTop: "8px",
+            fontSize: "10px",
+            color: "#475569",
+            textAlign: "left",
+          }}
+        >
+          {/* Left: Address lines */}
+          <div style={{ maxWidth: "50%", wordBreak: "break-word" }}>
+            {HOSPITAL_INFO.addressLines.map((line, i) => (
+              <p key={i} style={{ margin: i === 0 ? 0 : "1px 0 0 0", fontWeight: i === 0 ? 600 : 400, color: i === 0 ? "#1e293b" : "#475569" }}>
+                {line}
+              </p>
+            ))}
           </div>
-          <div className="text-left sm:text-right">
-            <p>
-              <strong className="text-slate-900">For Appointment Call:</strong>{" "}
-              {settings?.phone || HOSPITAL_INFO.phone}
-            </p>
-            <p>
-              <strong className="text-slate-900">Email:</strong> {HOSPITAL_INFO.email}
-            </p>
+
+          {/* Right: Appointment call + email lines */}
+          <div style={{ textAlign: "right", maxWidth: "50%", wordBreak: "break-word" }}>
+            {HOSPITAL_INFO.appointmentLines.map((line, i) => (
+              <p key={i} style={{ margin: i === 0 ? 0 : "1px 0 0 0", fontWeight: i === 0 ? 700 : 400, color: i === 0 ? "#1e293b" : "#475569" }}>
+                {line}
+              </p>
+            ))}
           </div>
         </div>
       </footer>

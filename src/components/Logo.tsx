@@ -30,7 +30,7 @@ export function Logo({ compact = false, className }: { compact?: boolean; classN
   // Read from localStorage synchronously (safe in Vite client-side app)
   // to avoid the 1-frame flicker of the default name on reload.
   let activeSettings = settings;
-  if (settings.clinicName === "HomeoCare Clinic") {
+  if (settings.clinicName === "Dr. Ayus Homoeopathy Hospital") {
     try {
       const stored = localStorage.getItem("clinic-store");
       if (stored) {
@@ -53,7 +53,7 @@ export function Logo({ compact = false, className }: { compact?: boolean; classN
       )}
       {!compact && (
         <span className="leading-tight">
-          <span className="block font-display text-lg text-foreground line-clamp-1">{activeSettings.clinicName || "HomeoCare"}</span>
+          <span className="block font-display text-lg text-foreground line-clamp-1">{activeSettings.clinicName || "Dr. Ayus Homoeopathy Hospital"}</span>
           <span className="block text-[11px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
             Clinic Manager
           </span>

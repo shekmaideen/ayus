@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS clinic_settings (
   follow_up_fee       DECIMAL(10,2) NOT NULL DEFAULT 250,
   registration_fee    DECIMAL(10,2) NOT NULL DEFAULT 100,
   low_stock_threshold INT           NOT NULL DEFAULT 10,
-  clinic_name         VARCHAR(200)  NOT NULL DEFAULT 'Dr. Ayus Homeopathy Hospital',
+  clinic_name         VARCHAR(200)  NOT NULL DEFAULT 'Dr. Ayus Homoeopathy Hospital',
   address             VARCHAR(500)  NOT NULL DEFAULT '',
   phone               VARCHAR(100)  NOT NULL DEFAULT '',
   doctor_name         VARCHAR(100)  NOT NULL DEFAULT '',
@@ -74,6 +74,19 @@ CREATE TABLE IF NOT EXISTS visits (
   notes      VARCHAR(1000) NOT NULL DEFAULT '',
   created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
+);
+
+-- ─── Chief Complaints (Chronological Clinical History) ────────────
+CREATE TABLE IF NOT EXISTS chief_complaints (
+  id         CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+  patient_id CHAR(36) NOT NULL,
+  visit_id   CHAR(36) NULL,
+  complaint  TEXT     NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_patient_created (patient_id, created_at),
+  FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE,
+  FOREIGN KEY (visit_id) REFERENCES visits(id) ON DELETE SET NULL
 );
 
 -- ─── Medicines ───────────────────────────────────────────────────
@@ -165,6 +178,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   INDEX idx_action (action),
   INDEX idx_created (created_at)
 );
+
 
 -- ─── Done ────────────────────────────────────────────────────────
 SELECT 'Dr. Ayus Homeopathy Hospital schema created successfully.' AS status;

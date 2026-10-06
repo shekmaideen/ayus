@@ -16,8 +16,17 @@ export interface Patient {
   registeredOn: string;
 }
 
+export interface ChiefComplaint {
+  id: string;
+  patientId: string;
+  visitId: string | null;
+  complaint: string;
+  createdAt: string;
+  updatedAt?: string | null;
+}
+
 export interface CaseHistory {
-  chiefComplaint: string;
+  chiefComplaint?: string;
   presentIllness: string;
   pastHistory: string;
   familyHistory: string;
@@ -41,18 +50,23 @@ export interface Visit {
 }
 
 export const BOTTLE_POTENCIES = [
+  "Q",
+  "3X",
+  "3CH",
+  "6CH",
+  "12CH",
   "30CH",
   "200CH",
   "1M",
-  "Q",
-  "4X",
-  "3X",
-  "6X",
+  "10M",
+  "50M",
+  "CM",
   "Other",
 ] as const;
 export type BottlePotency = (typeof BOTTLE_POTENCIES)[number];
 
 export const TABLET_POTENCIES = [
+  "None",
   "3X",
   "4X",
   "6X",
@@ -60,27 +74,96 @@ export const TABLET_POTENCIES = [
 ] as const;
 export type TabletPotency = (typeof TABLET_POTENCIES)[number];
 
+export const GLOBULES_POTENCIES = [
+  "1 drum",
+  "2 drum",
+  "3 drum",
+  "size 40",
+  "Other",
+] as const;
+export type GlobulesPotency = (typeof GLOBULES_POTENCIES)[number];
+
 export const MEDICINE_POTENCIES = [
+  "Q",
+  "3X",
+  "3CH",
+  "6CH",
+  "12CH",
   "30CH",
   "200CH",
   "1M",
-  "Q",
-  "4X",
-  "3X",
-  "6X",
+  "10M",
+  "50M",
+  "CM",
 ] as const;
 export type MedicinePotency = string;
+
+/**
+ * Normalizes homeopathic potencies from user and excel inputs:
+ * - "6x" / "6X" -> "6CH"
+ * - "12c" / "12C" -> "12CH"
+ * - "30c" / "30C" -> "30CH"
+ * - "200 c" / "200c" / "200C" -> "200CH"
+ * - "\d+c" -> "\d+CH"
+ * - Standardizes casing (e.g. "30ch" -> "30CH", "1m" -> "1M", "q" -> "Q")
+ * - Globules potencies (1 drum, 2 drum, 3 drum, size 40)
+ */
+export function normalizeMedicinePotency(p: string | null | undefined): string {
+  if (!p) return "";
+  const clean = String(p).trim();
+  if (!clean || clean === "-") return "";
+  const compact = clean.replace(/\s+/g, "");
+
+  // Globules potencies (1 drum, 2 drum, 3 drum, size 40)
+  const drumMatch = clean.match(/^(\d+)\s*(?:drum|dram)s?$/i);
+  if (drumMatch) {
+    return `${drumMatch[1]} drum`;
+  }
+  if (/^size\s*40$/i.test(clean) || /^40\s*size$/i.test(clean)) {
+    return "size 40";
+  }
+
+  // 6X or 6x -> 6CH (common mistaken entry in place of 6CH)
+  if (/^6x$/i.test(compact)) {
+    return "6CH";
+  }
+
+  // Any number followed by C / c -> CH (e.g. 12c -> 12CH, 30c -> 30CH, 200c -> 200CH)
+  const cMatch = compact.match(/^(\d+)[cC]$/);
+  if (cMatch) {
+    return `${cMatch[1]}CH`;
+  }
+
+  // Ensure uppercase for CH potencies (e.g. 30ch -> 30CH)
+  const chMatch = compact.match(/^(\d+)[cC][hH]$/i);
+  if (chMatch) {
+    return `${chMatch[1]}CH`;
+  }
+
+  // Common potencies uppercase (Q, MT, CM, 1M, 10M, 50M, 3X)
+  if (/^(q|mt|cm|\d+m|\d+x)$/i.test(compact)) {
+    return compact.toUpperCase();
+  }
+
+  return clean;
+}
 
 export function isPotencyApplicable(formType: string): boolean {
   if (!formType) return false;
   const norm = formType.trim().toLowerCase();
-  return norm === "bottle" || norm === "bottol" || norm === "tablet" || norm === "tablets";
+  return (
+    norm === "bottle" ||
+    norm === "bottol" ||
+    norm === "tablet" ||
+    norm === "tablets" ||
+    norm === "globules" ||
+    norm === "globule"
+  );
 }
 
-export function isBrandApplicable(formType: string): boolean {
-  if (!formType) return false;
-  const norm = formType.trim().toLowerCase();
-  return norm === "bottle" || norm === "bottol";
+export function isBrandApplicable(_formType: string): boolean {
+  // Brand name removed for bottle in add inventory as requested
+  return false;
 }
 
 export function getPotencyOptions(formType: string): readonly string[] {
@@ -88,6 +171,7 @@ export function getPotencyOptions(formType: string): readonly string[] {
   const norm = formType.trim().toLowerCase();
   if (norm === "bottle" || norm === "bottol") return BOTTLE_POTENCIES;
   if (norm === "tablet" || norm === "tablets") return TABLET_POTENCIES;
+  if (norm === "globules" || norm === "globule") return GLOBULES_POTENCIES;
   return [];
 }
 
